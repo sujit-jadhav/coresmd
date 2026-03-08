@@ -9,3 +9,7 @@
 .vscode
 .idea
 dist/
+
+# Binaries
+coredhcp
+coredns
