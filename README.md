@@ -1,3 +1,10 @@
+<!--
+SPDX-FileCopyrightText: © 2024-2025 Triad National Security, LLC.
+SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+
+SPDX-License-Identifier: MIT
+-->
+
 # CoreSMD - Connect CoreDHCP/CoreDNS to SMD
 
 ## Contents

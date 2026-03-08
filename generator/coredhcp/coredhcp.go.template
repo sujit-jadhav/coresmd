@@ -1,6 +1,8 @@
 // Copyright 2018-present the CoreDHCP Authors. All rights reserved
-// This source code is licensed under the MIT license found in the
-// LICENSE file in the root directory of this source tree.
+// SPDX-FileCopyrightText: © 2024-2025 Triad National Security, LLC.
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
 
 {{/* This file is the template source. The following comment obviously doesn't apply here */ -}}
 // This is a generated file, edits should be made in the corresponding source file
