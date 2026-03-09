@@ -16,12 +16,12 @@ SPDX-License-Identifier: MIT
     - [CoreDNS](#coredns)
   - [Overview](#overview)
   - [Configuration](#configuration)
-  - [Build and Install](#build-and-install)
-    - [Build/Install with GoReleaser](#buildinstall-with-goreleaser)
-      - [Environment Variables](#environment-variables)
-      - [Building Locally with GoReleaser](#building-locally-with-goreleaser)
-      - [Building Locally on Bare Metal](#building-locally-on-bare-metal)
-      - [Building a Local Container](#building-a-local-container)
+  - [Build](#build)
+    - [Build with GoReleaser](#build-with-goreleaser)
+      - [Using Make Targets](#using-make-targets)
+      - [Running Goreleaser Manually](#running-goreleaser-manually)
+    - [Build Binaries with Make](#build-binaries-with-make)
+    - [Build Container with Make](#build-container-with-make)
   - [Testing](#testing)
     - [CoreDHCP](#coredhcp-1)
     - [CoreDNS](#coredns-1)
@@ -74,15 +74,42 @@ CoreSMD acts as a pull-through cache of DHCP and DNS information from SMD, ensur
 
 Take a look at [**examples/**](examples/). In there are configuration examples and documentation for both CoreDHCP and CoreDNS.
 
-## Build and Install
+## Build
 
 The plugins in this repository can be built into CoreDHCP/CoreDNS either using a container-based approach (via the provided Dockerfile) or by statically compiling them into CoreDHCP/CoreDNS on bare metal. Additionally, this project uses [GoReleaser](https://goreleaser.com/) to automate releases and include build metadata.
 
-### Build/Install with GoReleaser
+For local build options, run:
 
-#### Environment Variables
+```bash
+make help
+```
 
-To include detailed build metadata, ensure the following environment variables are set:
+For a list of build targets.
+
+### Build with GoReleaser
+
+#### Using Make Targets
+
+If Goreleaser is already installed, the `goreleaser-*` Make targets can be used and the below steps skipped.
+
+To build the binaries only (binaries will be located in `dist/`):
+
+```bash
+make GORELEASER_OPTS='--clean --snapshot --single-target' goreleaser-build
+```
+
+To build the containers (all supported architectures):
+
+> [!NOTE]
+> Goreleaser, as of this writing, doesn't support building a container _only_ for the native architecture. If that is desired, see [**Build a Container with Make**](#build-a-container-with-make) below.
+
+```bash
+make GORELEASER_OPTS='--clean --snapshot --skip publish' goreleaser-release
+```
+
+#### Running Goreleaser Manually
+
+If running Goreleaser manually, ensure the following environment variables are set in order to include build metadata:
 
 - **BUILD_HOST**: The hostname of the machine where the build is performed.
 - **GO_VERSION**: The version of Go used for the build.
@@ -96,25 +123,36 @@ export GO_VERSION=$(go version | awk '{print $3}')
 export BUILD_USER=$(whoami)
 ```
 
-#### Building Locally with GoReleaser
-
-1. [Install GoReleaser](https://goreleaser.com/install/) if not already present.
-2. Run GoReleaser in snapshot mode to produce a local build without publishing:
-   ```bash
-   goreleaser release --snapshot --clean --skip=publish
-   ```
-3. Check the `dist/` directory for the built binaries, which will include the embedded metadata.
-
-#### Building Locally on Bare Metal
-
-Simply run `go build` for each project:
+To build binaries and containers for all supported architectures:
 
 ```bash
-go build ./build/coredhcp
-go build ./build/coredns
+goreleaser release --clean --snapshot --skip publish
 ```
 
-This will put `coredhcp` and `coredns` binaries in the repository root which can be used for building a container in the next step.
+To build just the binaries for the native architecture:
+
+```bash
+goreleaser build --clean --snapshot --single-target
+```
+
+Check the `dist/` directory for the built binaries, which will include the embedded metadata.
+
+### Build Binaries with Make
+
+Both binaries can be built with:
+
+```
+make
+```
+
+There are also Make targets for each separate binary:
+
+```
+make coredhcp
+make coredns
+```
+
+These will put `coredhcp` and `coredns` binaries in the repository root which can be used for building a container in the next step.
 
 Verify that CoreDHCP contains the **coresmd** and **bootloop** plugins:
 
@@ -126,18 +164,30 @@ coresmd
 
 ...and that CoreDNS contains the **coresmd** plugin:
 
+
 ```
 $ ./coredns --plugins | grep coresmd
 coresmd
 ```
 
-#### Building a Local Container
+### Build Container with Make
 
-To build a container that contains both CoreDHCP and CoreDNS, go through the [**Building Locally on Bare Metal**](#building-locally-on-bare-metal) step above, then run:
+To build a container that contains both CoreDHCP and CoreDNS, run:
 
-```bash
-docker build . --tag ghcr.io/openchami/coresmd:latest
 ```
+make container
+```
+
+> [!NOTE]
+> The container runtime is Docker by default, but is configurable. For example, to use Podman:
+> ```bash
+> make CONTAINER_PROG="$(which podman)" container
+> ```
+
+> [!NOTE]
+> Container tags are also configurable. Use `make ... CONTAINER_TAG=$TAG container` to change it.
+
+The container contains [`dhcping`](https://github.com/nean-and-i/dhcping) that can be used as a health check for CoreDHCP.
 
 ---
 
@@ -145,12 +195,68 @@ docker build . --tag ghcr.io/openchami/coresmd:latest
 
 ### CoreDHCP
 
-Currently, the repository does not include standalone test scripts for these plugins. However, once compiled into CoreDHCP, you can test the overall DHCP server behavior using tools like:
+To test the DHCP handshake, **iproute2** tools can be used to create a virtual interface in a separate network namespace that can be used to perform DORA.
 
-- [dhcping](https://github.com/rickardw/dhcping)
-- [dnsmasq DHCP client testing](http://www.thekelleys.org.uk/dnsmasq/doc.html)
+```bash
+# Create the network namespace called "dhcptest"
+sudo ip netns add dhcptest
 
-Because the plugins integrate with SMD, also verify that your SMD instance is returning correct data, and confirm the environment variables (if using GoReleaser) are correctly embedded in the binary.
+# Create veth pair
+# veth-srv: virtual interface in parent namespace ("server")
+# veth-cli: virtual interface in child namespace ("client")
+sudo ip link add veth-srv type veth peer name veth-cli
+sudo ip link set veth-cli netns dhcptest
+
+# Bring up both interfaces
+sudo ip link set veth-srv up
+sudo ip netns exec dhcptest ip link set lo up
+sudo ip netns exec dhcptest ip link set veth-cli up
+
+# Optionally set specific MAC address on test interface
+sudo ip netns exec dhcptest ip link set dev veth-cli address de:ad:c0:de:ca:fe
+```
+
+Ensure CoreDHCP can listen on **veth-srv**. If restricting the interfaces CoreDHCP listens on, ensure there's a proper entry under `listen`, e.g:
+
+```yaml
+server4:
+  listen:
+    - '%veth-srv'
+```
+
+Then, monitor the interface for the DORA handshake:
+
+```bash
+sudo tcpdump -nnni veth-srv -vvv 'udp port 67 or udp port 68'
+```
+
+Initiate the DHCP handshake from the namespaced virtual network interface:
+
+```bash
+# Using dhclient
+sudo ip netns exec dhcptest dhclient -4 -v -d -i veth-cli
+
+# Using BusyBox udhcpc
+sudo ip netns exec dhcptest udhcpc -i veth-cli -f -vv
+```
+
+Monitor the output of `tcpdump` for the DORA handshake.
+
+Cleaning up:
+
+```bash
+# OPTIONAL: Kill processes inside child network namespace
+sudo ip netns pids dhcptest | xargs -r sudo kill
+
+# OPTIONAL: Release lease if dhclient was used
+sudo ip netns exec dhcptest dhclient -4 -r veth-cli
+
+# Delete namespace and veth-cli interface inside it
+sudo ip netns del dhcptest
+
+# Delete parent namespace veth if it still exists
+sudo ip link del veth-srv
+```
 
 ### CoreDNS
 
