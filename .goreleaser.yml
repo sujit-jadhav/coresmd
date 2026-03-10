@@ -1,3 +1,8 @@
+# SPDX-FileCopyrightText: © 2024-2025 Triad National Security, LLC.
+# SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+#
+# SPDX-License-Identifier: MIT
+
 version: 2
 
 project_name: coresmd
@@ -92,7 +97,7 @@ dockers:
     goarch: amd64
     goamd64: v3
     extra_files:
-      - LICENSE
+      - LICENSES/MIT.txt
       - README.md
 
   - image_templates:
@@ -108,8 +113,8 @@ dockers:
       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
       - "--label=org.opencontainers.image.version={{.Version}}"
     extra_files:
+      - LICENSES/MIT.txt
       - README.md
-      - LICENSE
     goarch: arm64
 
 docker_manifests:

@@ -1,3 +1,10 @@
+<!--
+SPDX-FileCopyrightText: © 2024-2025 Triad National Security, LLC.
+SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+
+SPDX-License-Identifier: MIT
+-->
+
 # CoreSMD Examples
 
 This directory contains example configurations and deployment files for the CoreSMD project, which provides both CoreDHCP and CoreDNS plugins for OpenCHAMI clusters.

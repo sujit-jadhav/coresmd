@@ -1,3 +1,10 @@
+<!--
+SPDX-FileCopyrightText: © 2024-2025 Triad National Security, LLC.
+SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+
+SPDX-License-Identifier: MIT
+-->
+
 # CoreSMD CoreDNS Plugin
 
 The CoreSMD CoreDNS plugin provides dynamic DNS resolution for OpenCHAMI clusters by integrating with the State Management Database (SMD). This plugin enables automatic DNS record generation for compute nodes, BMCs, and other components managed by SMD.
