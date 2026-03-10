@@ -256,6 +256,10 @@ sudo ip netns del dhcptest
 
 # Delete parent namespace veth if it still exists
 sudo ip link del veth-srv
+
+# Ensure namespace and interfaces are gone (output should be empty)
+sudo ip netns list | grep dhcptest
+ip link show | grep -e veth-srv -e veth-cli
 ```
 
 ### CoreDNS
