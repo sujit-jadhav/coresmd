@@ -154,12 +154,40 @@ func setup4(args ...string) (handler.Handler4, error) {
 // errors occur, they are gathered into errs, a slice of errors, so that they
 // can be printed or handled.
 func parseConfig(argv ...string) (cfg Config, errs []error) {
-	for idx, arg := range argv {
+	var (
+		idx           int  = 0     // Separate arg index so comments aren't counted
+		insideComment bool = false // Track if inside a comment
+		commentIdx    int  = -1    // Track where last comment began for printing error
+	)
+	for argIdx, arg := range argv {
+		// Parse comments (skip further arg parsing until out of comment)
+		if len(arg) >= 2 {
+			if arg[0:2] == "/*" || arg[len(arg)-2:] == "*/" {
+				if arg[0:2] == "/*" {
+					insideComment = true
+					commentIdx = argIdx + 1
+				}
+				if arg[len(arg)-2:] == "*/" {
+					if !insideComment {
+						errs = append(errs, fmt.Errorf("arg %d: comment terminator (\"*/\") found without start of comment (\"/*\")", argIdx+1))
+					}
+					insideComment = false
+				}
+				continue
+			}
+		}
+		if insideComment {
+			continue
+		} else {
+			// If not a comment, increase separate arg index
+			idx++
+		}
+
 		opt := strings.SplitN(arg, "=", 2)
 
 		// Ensure key=val format
 		if len(opt) != 2 {
-			errs = append(errs, fmt.Errorf("arg %d: invalid format '%s', should be 'key=val' (skipping)", idx, arg))
+			errs = append(errs, fmt.Errorf("non-comment arg %d: invalid format '%s', should be 'key=val' (skipping)", idx, arg))
 			continue
 		}
 
@@ -168,7 +196,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 		case "lease_file":
 			leaseFile := strings.Trim(opt[1], `"'`)
 			if leaseFile == "" {
-				errs = append(errs, fmt.Errorf("arg %d: %s: empty (skipping)", idx, opt[0]))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: empty (skipping)", idx, opt[0]))
 				continue
 			} else {
 				cfg.leaseFile = leaseFile
@@ -176,7 +204,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 		case "script_path":
 			scriptPath := strings.Trim(opt[1], `"'`)
 			if scriptPath == "" {
-				errs = append(errs, fmt.Errorf("arg %d: %s: empty (setting to default script)", idx, opt[0]))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: empty (setting to default script)", idx, opt[0]))
 				cfg.scriptPath = defaultScriptPath
 				continue
 			} else {
@@ -184,7 +212,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 			}
 		case "lease_time":
 			if leaseTime, err := time.ParseDuration(opt[1]); err != nil {
-				errs = append(errs, fmt.Errorf("arg %d: %s: invalid duration '%s' (skipping)", idx, opt[0], opt[1]))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid duration '%s' (skipping)", idx, opt[0], opt[1]))
 				continue
 			} else {
 				cfg.leaseTime = &leaseTime
@@ -192,7 +220,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 		case "ipv4_start":
 			ipv4Start := net.ParseIP(opt[1])
 			if ipv4Start.To4() == nil {
-				errs = append(errs, fmt.Errorf("arg %d: %s: invalid ip address '%s' (skipping)", idx, opt[0], opt[1]))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid ip address '%s' (skipping)", idx, opt[0], opt[1]))
 				continue
 			} else {
 				cfg.ipv4Start = &ipv4Start
@@ -200,15 +228,18 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 		case "ipv4_end":
 			ipv4End := net.ParseIP(opt[1])
 			if ipv4End.To4() == nil {
-				errs = append(errs, fmt.Errorf("arg %d: %s: invalid ip address '%s' (skipping)", idx, opt[0], opt[1]))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid ip address '%s' (skipping)", idx, opt[0], opt[1]))
 				continue
 			} else {
 				cfg.ipv4End = &ipv4End
 			}
 		default:
-			errs = append(errs, fmt.Errorf("arg %d: unknown config key '%s' (skipping)", idx, opt[0]))
+			errs = append(errs, fmt.Errorf("non-comment arg %d: unknown config key '%s' (skipping)", idx, opt[0]))
 			continue
 		}
+	}
+	if insideComment {
+		errs = append(errs, fmt.Errorf("arg %d: unterminated comment (\"/*\" found without a \"*/\")", commentIdx))
 	}
 	return
 }

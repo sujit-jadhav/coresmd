@@ -97,6 +97,58 @@ func TestParseConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "valid comments arg format",
+			argv: strings.Fields(`/* comment at beginning */
+				lease_file=/some/file
+				/* comment in middle */
+				script_path=/some/script
+				/* comment at end */`),
+			want: Config{
+				leaseFile:  "/some/file",
+				scriptPath: "/some/script",
+			},
+		},
+		{
+			name: "runaway comment",
+			argv: strings.Fields(`/* comment at beginning */
+				lease_file=/some/file
+				/* comment in middle
+				script_path=/some/script`),
+			want: Config{
+				leaseFile: "/some/file",
+			},
+			wantErrCount: 1,
+			wantErrSub:   []string{`unterminated comment`},
+		},
+		{
+			name:         "comment end without comment start",
+			argv:         strings.Fields(`comment at beginning */`),
+			want:         Config{},
+			wantErrCount: 4,
+			wantErrSub:   []string{`found without start of comment`},
+		},
+		{
+			name: "duplicate comment start",
+			argv: strings.Fields(`lease_file=/some/file
+				/* comment in /* middle */
+				script_path=/some/script
+				/* comment at end */`),
+			want: Config{
+				leaseFile:  "/some/file",
+				scriptPath: "/some/script",
+			},
+		},
+		{
+			name: "comment without spaces",
+			argv: strings.Fields(`lease_file=/some/file
+				/*comment*/
+				script_path=/some/script`),
+			want: Config{
+				leaseFile:  "/some/file",
+				scriptPath: "/some/script",
+			},
+		},
+		{
 			name: "invalid format without equal sign",
 			argv: []string{"not_a_key_val"},
 			want: Config{},

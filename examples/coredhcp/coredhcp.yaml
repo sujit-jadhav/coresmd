@@ -249,7 +249,7 @@ server4:
     #   overwritten if so. The format of the file is an Sqlite database.
     #
     # script_path (OPTIONAL, string, default=default)
-    #   The filesystem path to an PXE script to serve to DHCP requests. If
+    #   The filesystem path to an iPXE script to serve to DHCP requests. If
     #   using the build-in coresmd FTP server, this should be 'default', which
     #   will make bootloop serve a simple iPXE script that reboots.
     #
@@ -270,10 +270,15 @@ server4:
     # ipv4_end (REQUIRED, string)
     #   The end IPv4 address for the pool of IPs to assign.
     - bootloop: |
+        /* file to store DHCP leases in */
         lease_file=/tmp/coredhcp.db
+        /* OPTIONAL: path to custom iPXE script to serve for DHCP requests (default is default script) */
         script_path=default
+        /* OPTIONAL: lease duration (default 5m)
         lease_time=5m
+        /* IPv4 address starting the range, inclusive */
         ipv4_start=172.16.0.156
+        /* IPv4 address ending the range, inclusive */
         ipv4_end=172.16.0.200
 
 ###############################################################################
