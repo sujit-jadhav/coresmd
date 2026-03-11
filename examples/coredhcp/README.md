@@ -47,6 +47,23 @@ plugins:
       lease_time=1h single_port=false
 ```
 
+Comments are supported too:
+
+```yaml
+plugins:
+  - coresmd: |
+      /* SMD base URI */
+      svc_base_uri=https://foobar.openchami.cluster
+      /* BSS boot script base URI */
+      ipxe_base_uri=http://172.16.0.253:8081
+      /* CA trust bundle */
+      ca_cert=/root_ca/root_ca.crt
+      /* SMD cache validity duration */
+      cache_valid=30s
+      /* lease duration */
+      lease_time=1h single_port=false
+```
+
 See [coredhcp.yaml](coredhcp.yaml) for a full example with documentation comments.
 
 ## DHCPv4 and DHCPv6 Support

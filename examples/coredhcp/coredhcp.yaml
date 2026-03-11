@@ -177,19 +177,32 @@ server4:
     #   bmc_pattern, respectively. Values set for node_pattern and bmc_pattern will
     #   override values set for Node and NodeBMC if set for hostname_default.
     - coresmd: |
+        /* SMD base URI */
         svc_base_uri=https://foobar.openchami.cluster
+        /* BSS base URI for obtaining boot scripts */
         ipxe_base_uri=http://172.16.0.253:8081
+        /* OPTIONAL: path to CA trust certificate bundle */
         ca_cert=/root_ca/root_ca.crt
+        /* OPTIONAL: duration that component/interface cache is valid (default 30s) */
         cache_valid=30s
+        /* OPTIONAL: duration that served leases are valid (default 1h) */
         lease_time=1h
+        /* OPTIONAL: toggle TFTP single-port mode (default false) */
         single_port=false
+        /* OPTIONAL: TFTP server root directory (default /tftpboot) */
         tftp_dir=/tftpboot
+        /* OPTIONAL: TFTP server listen port (default 69) */
         tftp_port=69
+        /* OPTIONAL: pattern for determining node hostnames */
         node_pattern=nid{04d}
+        /* OPTIONAL: pattern for determining BMC hostnames */
         bmc_pattern=bmc{04d}
+        /* OPTIONAL: domain to append to hostnames */
         domain=openchami.cluster
+        /* OPTIONAL: policies to use hostname pattern by SMD component type */
         hostname_by_type=Node:nid{04d}
         hostname_by_type=HSNSwitch:{id}
+        /* OPTIONAL: fallback hostname pattern */
         hostname_default=
 
     # Any requests reaching this point are unknown to SMD and it is up to the

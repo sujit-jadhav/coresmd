@@ -209,12 +209,40 @@ func setup4(args ...string) (handler.Handler4, error) {
 // errors occur, they are gathered into errs, a slice of errors, so that they
 // can be printed or handled.
 func parseConfig(argv ...string) (cfg Config, errs []error) {
-	for idx, arg := range argv {
+	var (
+		idx           int  = 0     // Separate arg index so comments aren't counted
+		insideComment bool = false // Track if inside a comment
+		commentIdx    int  = -1    // Track where last comment began for printing error
+	)
+	for argIdx, arg := range argv {
+		// Parse comments (skip further arg parsing until out of comment)
+		if len(arg) >= 2 {
+			if arg[0:2] == "/*" || arg[len(arg)-2:] == "*/" {
+				if arg[0:2] == "/*" {
+					insideComment = true
+					commentIdx = argIdx + 1
+				}
+				if arg[len(arg)-2:] == "*/" {
+					if !insideComment {
+						errs = append(errs, fmt.Errorf("arg %d: comment terminator (\"*/\") found without start of comment (\"/*\")", argIdx+1))
+					}
+					insideComment = false
+				}
+				continue
+			}
+		}
+		if insideComment {
+			continue
+		} else {
+			// If not a comment, increase separate arg index
+			idx++
+		}
+
 		opt := strings.SplitN(arg, "=", 2)
 
 		// Ensure key=val format
 		if len(opt) != 2 {
-			errs = append(errs, fmt.Errorf("arg %d: invalid format '%s', should be 'key=val' (skipping)", idx, arg))
+			errs = append(errs, fmt.Errorf("non-comment arg %d: invalid format '%s', should be 'key=val' (skipping)", idx, arg))
 			continue
 		}
 
@@ -222,14 +250,14 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 		switch opt[0] {
 		case "svc_base_uri":
 			if svcURI, err := url.Parse(opt[1]); err != nil {
-				errs = append(errs, fmt.Errorf("arg %d: %s: invalid URI '%s' (skipping): %w", idx, opt[0], opt[1], err))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid URI '%s' (skipping): %w", idx, opt[0], opt[1], err))
 				continue
 			} else {
 				cfg.svcBaseURI = svcURI
 			}
 		case "ipxe_base_uri":
 			if ipxeURI, err := url.Parse(opt[1]); err != nil {
-				errs = append(errs, fmt.Errorf("arg %d: %s: invalid URI '%s' (skipping): %w", idx, opt[0], opt[1], err))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid URI '%s' (skipping): %w", idx, opt[0], opt[1], err))
 				continue
 			} else {
 				cfg.ipxeBaseURI = ipxeURI
@@ -242,21 +270,21 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 			}
 		case "cache_valid":
 			if cacheValid, err := time.ParseDuration(opt[1]); err != nil {
-				errs = append(errs, fmt.Errorf("arg %d: %s: invalid duration '%s' (skipping): %w", idx, opt[0], opt[1], err))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid duration '%s' (skipping): %w", idx, opt[0], opt[1], err))
 				continue
 			} else {
 				cfg.cacheValid = &cacheValid
 			}
 		case "lease_time":
 			if leaseTime, err := time.ParseDuration(opt[1]); err != nil {
-				errs = append(errs, fmt.Errorf("arg %d: %s: invalid duration '%s' (skipping): %w", idx, opt[0], opt[1], err))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid duration '%s' (skipping): %w", idx, opt[0], opt[1], err))
 				continue
 			} else {
 				cfg.leaseTime = &leaseTime
 			}
 		case "single_port":
 			if singlePort, err := strconv.ParseBool(opt[1]); err != nil {
-				errs = append(errs, fmt.Errorf("arg %d: %s: invalid value '%s' (defaulting to false): %w", idx, opt[0], opt[1], err))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid value '%s' (defaulting to false): %w", idx, opt[0], opt[1], err))
 				continue
 			} else {
 				cfg.singlePort = singlePort
@@ -268,13 +296,13 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 			}
 		case "tftp_port":
 			if tftpPort, err := strconv.ParseInt(opt[1], 10, 64); err != nil {
-				errs = append(errs, fmt.Errorf("arg %d: %s: invalid port '%s' (defaulting to %d): %w", idx, opt[0], opt[1], defaultTFTPPort, err))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid port '%s' (defaulting to %d): %w", idx, opt[0], opt[1], defaultTFTPPort, err))
 				cfg.tftpPort = defaultTFTPPort
 			} else {
 				if tftpPort >= 0 && tftpPort <= 65535 {
 					cfg.tftpPort = int(tftpPort)
 				} else {
-					errs = append(errs, fmt.Errorf("arg %d: %s: port '%d' out of range, must be between 0-65535 (defaulting to %d)", idx, opt[0], tftpPort, defaultTFTPPort))
+					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: port '%d' out of range, must be between 0-65535 (defaulting to %d)", idx, opt[0], tftpPort, defaultTFTPPort))
 					cfg.tftpPort = defaultTFTPPort
 				}
 			}
@@ -306,7 +334,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 				// componentType = vals[0], pattern = vals[1]
 				vals := strings.SplitN(opt[1], ":", 2)
 				if len(vals) != 2 {
-					errs = append(errs, fmt.Errorf("arg %d: invalid format for key '%s': expected hostname_by_type=<type>:<pattern>, got %s", idx, opt[0], opt[1]))
+					errs = append(errs, fmt.Errorf("non-comment arg %d: invalid format for key '%s': expected hostname_by_type=<type>:<pattern>, got %s", idx, opt[0], opt[1]))
 					continue
 				}
 				if cfg.policy.ByType == nil {
@@ -315,9 +343,12 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 				cfg.policy.ByType[vals[0]] = vals[1]
 			}
 		default:
-			errs = append(errs, fmt.Errorf("arg %d: unknown config key '%s' (skipping)", idx, opt[0]))
+			errs = append(errs, fmt.Errorf("non-comment arg %d: unknown config key '%s' (skipping)", idx, opt[0]))
 			continue
 		}
+	}
+	if insideComment {
+		errs = append(errs, fmt.Errorf("arg %d: unterminated comment (\"/*\" found without a \"*/\")", commentIdx))
 	}
 	return
 }
