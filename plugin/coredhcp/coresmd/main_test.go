@@ -125,6 +125,78 @@ func TestParseConfig_Table(t *testing.T) {
 			wantErrsMin: 0,
 		},
 		{
+			name: "valid comments arg format",
+			args: strings.Fields(`/* comment at beginning */
+				svc_base_uri=https://svc.example.test
+				/* comment in middle */
+				tftp_dir=/tftp
+				/* comment at end */`),
+			wantCfg: func() Config {
+				svc, _ := url.Parse("https://svc.example.test")
+				return Config{
+					svcBaseURI: svc,
+					tftpDir:    "/tftp",
+				}
+			},
+			wantErrsMin: 0,
+		},
+		{
+			name: "runaway comment",
+			args: strings.Fields(`/* comment at beginning */
+				svc_base_uri=https://svc.example.test
+				/* comment in middle
+				tftp_dir=/tftp`),
+			wantCfg: func() Config {
+				svc, _ := url.Parse("https://svc.example.test")
+				return Config{
+					svcBaseURI: svc,
+				}
+			},
+			wantErrsMin: 1,
+		},
+		{
+			name: "comment end without comment start",
+			args: strings.Fields(`svc_base_uri=https://svc.example.test
+				comment in middle */
+				tftp_dir=/tftp`),
+			wantCfg: func() Config {
+				svc, _ := url.Parse("https://svc.example.test")
+				return Config{
+					svcBaseURI: svc,
+					tftpDir:    "/tftp",
+				}
+			},
+			wantErrsMin: 1,
+		},
+		{
+			name: "duplicate comment start",
+			args: strings.Fields(`svc_base_uri=https://svc.example.test
+				/* comment /* in middle */
+				tftp_dir=/tftp`),
+			wantCfg: func() Config {
+				svc, _ := url.Parse("https://svc.example.test")
+				return Config{
+					svcBaseURI: svc,
+					tftpDir:    "/tftp",
+				}
+			},
+			wantErrsMin: 0,
+		},
+		{
+			name: "comment without spaces",
+			args: strings.Fields(`svc_base_uri=https://svc.example.test
+				/*comment*/
+				tftp_dir=/tftp`),
+			wantCfg: func() Config {
+				svc, _ := url.Parse("https://svc.example.test")
+				return Config{
+					svcBaseURI: svc,
+					tftpDir:    "/tftp",
+				}
+			},
+			wantErrsMin: 0,
+		},
+		{
 			name: "invalid arg format",
 			args: []string{
 				"svc_base_uri=https://svc.example.test",

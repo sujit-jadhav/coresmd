@@ -177,19 +177,32 @@ server4:
     #   bmc_pattern, respectively. Values set for node_pattern and bmc_pattern will
     #   override values set for Node and NodeBMC if set for hostname_default.
     - coresmd: |
+        /* SMD base URI */
         svc_base_uri=https://foobar.openchami.cluster
+        /* BSS base URI for obtaining boot scripts */
         ipxe_base_uri=http://172.16.0.253:8081
+        /* OPTIONAL: path to CA trust certificate bundle */
         ca_cert=/root_ca/root_ca.crt
+        /* OPTIONAL: duration that component/interface cache is valid (default 30s) */
         cache_valid=30s
+        /* OPTIONAL: duration that served leases are valid (default 1h) */
         lease_time=1h
+        /* OPTIONAL: toggle TFTP single-port mode (default false) */
         single_port=false
+        /* OPTIONAL: TFTP server root directory (default /tftpboot) */
         tftp_dir=/tftpboot
+        /* OPTIONAL: TFTP server listen port (default 69) */
         tftp_port=69
+        /* OPTIONAL: pattern for determining node hostnames */
         node_pattern=nid{04d}
+        /* OPTIONAL: pattern for determining BMC hostnames */
         bmc_pattern=bmc{04d}
+        /* OPTIONAL: domain to append to hostnames */
         domain=openchami.cluster
+        /* OPTIONAL: policies to use hostname pattern by SMD component type */
         hostname_by_type=Node:nid{04d}
         hostname_by_type=HSNSwitch:{id}
+        /* OPTIONAL: fallback hostname pattern */
         hostname_default=
 
     # Any requests reaching this point are unknown to SMD and it is up to the
@@ -236,7 +249,7 @@ server4:
     #   overwritten if so. The format of the file is an Sqlite database.
     #
     # script_path (OPTIONAL, string, default=default)
-    #   The filesystem path to an PXE script to serve to DHCP requests. If
+    #   The filesystem path to an iPXE script to serve to DHCP requests. If
     #   using the build-in coresmd FTP server, this should be 'default', which
     #   will make bootloop serve a simple iPXE script that reboots.
     #
@@ -257,10 +270,15 @@ server4:
     # ipv4_end (REQUIRED, string)
     #   The end IPv4 address for the pool of IPs to assign.
     - bootloop: |
+        /* file to store DHCP leases in */
         lease_file=/tmp/coredhcp.db
+        /* OPTIONAL: path to custom iPXE script to serve for DHCP requests (default is default script) */
         script_path=default
+        /* OPTIONAL: lease duration (default 5m)
         lease_time=5m
+        /* IPv4 address starting the range, inclusive */
         ipv4_start=172.16.0.156
+        /* IPv4 address ending the range, inclusive */
         ipv4_end=172.16.0.200
 
 ###############################################################################
