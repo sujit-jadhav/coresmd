@@ -49,6 +49,24 @@ func (enk ErrNoKey) Error() string {
 	return fmt.Sprintf("element %d: empty key (got %q)", enk.Elem, enk.Got)
 }
 
+// ErrUnknownKey represents an error that occurs when a rule contains an unknown
+// key.
+type ErrUnknownKey struct {
+	Elem int
+	Key  string
+}
+
+func NewErrUnknownKey(elem int, key string) ErrUnknownKey {
+	return ErrUnknownKey{
+		Elem: elem,
+		Key:  key,
+	}
+}
+
+func (euk ErrUnknownKey) Error() string {
+	return fmt.Sprintf("element %d: unknown key %q", euk.Elem, euk.Key)
+}
+
 // ErrBadQuote represents an error that occurs when there is a quoting error in
 // a hostname rule.
 type ErrBadQuote struct {
@@ -66,7 +84,7 @@ func NewErrBadQuote(elem int, got string, quoteErr error) ErrBadQuote {
 }
 
 func (ebq ErrBadQuote) Error() string {
-	return fmt.Sprintf("element %d: bad quoting: %w: got %q", ebq.Elem, ebq.QuoteErr, ebq.Got)
+	return fmt.Sprintf("element %d: bad quoting: %v: got %q", ebq.Elem, ebq.QuoteErr, ebq.Got)
 }
 
 type ErrDuplicateKey struct {

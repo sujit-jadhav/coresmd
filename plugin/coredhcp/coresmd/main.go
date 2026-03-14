@@ -19,6 +19,7 @@ import (
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/dhcpv6"
 	"github.com/insomniacslk/dhcp/rfc1035label"
+	"github.com/sirupsen/logrus"
 
 	"github.com/openchami/coresmd/internal/cache"
 	"github.com/openchami/coresmd/internal/debug"
@@ -40,15 +41,13 @@ type Config struct {
 	singlePort    bool            // single_port
 	tftpDir       string          // tftp_dir
 	tftpPort      int             // tftp_port
-	bmcPattern    string          // bmc_pattern
-	nodePattern   string          // node_pattern
 	domain        string          // domain
 	hostnameLog   string          // hostname_log
 	hostnameRules []hostname.Rule // hostname_rule
 }
 
 func (c Config) String() string {
-	cfgStr := fmt.Sprintf("svc_base_uri=%s ipxe_base_uri=%s ca_cert=%s cache_valid=%s lease_time=%s single_port=%v tftp_dir=%s tftp_port=%d bmc_pattern=%s node_pattern=%s domain=%s",
+	cfgStr := fmt.Sprintf("svc_base_uri=%s ipxe_base_uri=%s ca_cert=%s cache_valid=%s lease_time=%s single_port=%v tftp_dir=%s tftp_port=%d domain=%s",
 		c.svcBaseURI,
 		c.ipxeBaseURI,
 		c.caCert,
@@ -57,8 +56,6 @@ func (c Config) String() string {
 		c.singlePort,
 		c.tftpDir,
 		c.tftpPort,
-		c.bmcPattern,
-		c.nodePattern,
 		c.domain,
 	)
 	if len(c.hostnameRules) > 0 {
@@ -400,14 +397,6 @@ func (c *Config) validate() (warns []string, errs []error) {
 		warns = append(warns, fmt.Sprintf("tftp_dir unset, defaulting to %s", tftp.DefaultTFTPDirectory))
 		c.tftpDir = tftp.DefaultTFTPDirectory
 	}
-	if c.bmcPattern == "" {
-		warns = append(warns, fmt.Sprintf("bmc_pattern unset, defaulting to %s", defaultBMCPattern))
-		c.bmcPattern = defaultBMCPattern
-	}
-	if c.nodePattern == "" {
-		warns = append(warns, fmt.Sprintf("node_pattern unset, defaulting to %s", defaultNodePattern))
-		c.nodePattern = defaultNodePattern
-	}
 	if c.domain == "" {
 		warns = append(warns, "domain unset, not configuring")
 	}
@@ -422,7 +411,7 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 	(*smdCache).Mutex.RLock()
 	defer smdCache.Mutex.RUnlock()
 
-	// STEP 1: Assign IP address
+	// STEP 1: Assign IP address and set standard DHCP options
 	hwAddr := req.ClientHWAddr.String()
 	ifaceInfo, err := iface.LookupMAC(log, hwAddr, smdCache)
 	if err != nil {
@@ -439,32 +428,25 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 		resp.Options.Update(dhcpv4.OptIPAddressLeaseTime(*globalConfig.leaseTime))
 	}
 
-	// Apply hostname policy customizations
-	hname := "(none)"
-
-	// Allow node_pattern and bmc_pattern to overwrite hostname from policy
-	if ifaceInfo.Type == "Node" {
-		nodeHostname := hostname.ExpandHostnamePattern(globalConfig.nodePattern, ifaceInfo.CompNID, ifaceInfo.CompID)
-		if globalConfig.domain != "" {
-			nodeHostname = nodeHostname + "." + globalConfig.domain
-		}
-		hname = nodeHostname
-		log.Debugf("setting hostname for node %s to %s", ifaceInfo.CompID, hname)
-	} else if ifaceInfo.Type == "NodeBMC" {
-		bmcHostname := hostname.ExpandHostnamePattern(globalConfig.bmcPattern, ifaceInfo.CompNID, ifaceInfo.CompID)
-		if globalConfig.domain != "" {
-			bmcHostname = bmcHostname + "." + globalConfig.domain
-		}
-		hname = bmcHostname
-		log.Debugf("setting hostname for BMC %s to %s", ifaceInfo.CompID, hname)
-	}
-
-	// Log assignment
-	log.Infof("assigning IP %s and hostname %s to %s (%s) with a lease duration of %s", assignedIP, hname, ifaceInfo.MAC, ifaceInfo.Type, globalConfig.leaseTime)
+	// Apply hostname rules
+	hname := hostname.LookupHostname(log, ifaceInfo, globalConfig.domain, globalConfig.hostnameLog, globalConfig.hostnameRules)
 	resp.Options.Update(dhcpv4.OptHostName(hname))
 
 	// Set root path to this server's IP
 	resp.Options.Update(dhcpv4.OptRootPath(resp.ServerIPAddr.String()))
+
+	// Log assignment
+	log.WithFields(logrus.Fields{
+		"comp_id":           ifaceInfo.CompID,
+		"comp_nid":          ifaceInfo.CompNID,
+		"comp_type":         ifaceInfo.Type,
+		"comp_ips":          ifaceInfo.IPList,
+		"comp_mac":          ifaceInfo.MAC,
+		"assigned_ipv4":     assignedIP,
+		"assigned_hostname": hname,
+		"lease_duration":    globalConfig.leaseTime,
+		"server_ip":         resp.ServerIPAddr,
+	}).Info("DHCPv4 assignment")
 
 	// STEP 2: Send boot config
 	if cinfo := req.Options.Get(dhcpv4.OptionUserClassInformation); string(cinfo) != "iPXE" {
@@ -526,27 +508,10 @@ func Handler6(req, resp dhcpv6.DHCPv6) (dhcpv6.DHCPv6, bool) {
 		return resp, false
 	}
 
-	// Set client hostname
-	hname := "(none)"
-	if ifaceInfo.Type == "Node" {
-		nodeHostname := hostname.ExpandHostnamePattern(globalConfig.nodePattern, ifaceInfo.CompNID, ifaceInfo.CompID)
-		if globalConfig.domain != "" {
-			nodeHostname = nodeHostname + "." + globalConfig.domain
-		}
-		hname = nodeHostname
-		labels := &rfc1035label.Labels{Labels: strings.Split(nodeHostname, ".")}
-		msg.UpdateOption(&dhcpv6.OptFQDN{Flags: 0, DomainName: labels})
-		log.Debugf("setting hostname for node %s to %s", ifaceInfo.CompID, nodeHostname)
-	} else if ifaceInfo.Type == "NodeBMC" {
-		bmcHostname := hostname.ExpandHostnamePattern(globalConfig.bmcPattern, ifaceInfo.CompNID, ifaceInfo.CompID)
-		if globalConfig.domain != "" {
-			bmcHostname = bmcHostname + "." + globalConfig.domain
-		}
-		hname = bmcHostname
-		labels := &rfc1035label.Labels{Labels: strings.Split(bmcHostname, ".")}
-		msg.UpdateOption(&dhcpv6.OptFQDN{Flags: 0, DomainName: labels})
-		log.Debugf("setting hostname for BMC %s to %s", ifaceInfo.CompID, bmcHostname)
-	}
+	// Apply hostname rules
+	hname := hostname.LookupHostname(log, ifaceInfo, globalConfig.domain, globalConfig.hostnameLog, globalConfig.hostnameRules)
+	labels := &rfc1035label.Labels{Labels: strings.Split(hname, ".")}
+	msg.UpdateOption(&dhcpv6.OptFQDN{Flags: 0, DomainName: labels})
 
 	// Add IANA (Identity Association for Non-temporary Addresses) with the IPv6 address
 	reqMsg, ok := req.(*dhcpv6.Message)
@@ -573,7 +538,16 @@ func Handler6(req, resp dhcpv6.DHCPv6) (dhcpv6.DHCPv6, bool) {
 	}
 
 	// Log assignment
-	log.Infof("assigning IPv6 %s and hostname %s to %s (%s) with a lease duration of %s", assignedIPv6, hname, ifaceInfo.MAC, ifaceInfo.Type, globalConfig.leaseTime)
+	log.WithFields(logrus.Fields{
+		"comp_id":           ifaceInfo.CompID,
+		"comp_nid":          ifaceInfo.CompNID,
+		"comp_type":         ifaceInfo.Type,
+		"comp_ips":          ifaceInfo.IPList,
+		"comp_mac":          ifaceInfo.MAC,
+		"assigned_ipv6":     assignedIPv6,
+		"assigned_hostname": hname,
+		"lease_duration":    globalConfig.leaseTime,
+	}).Info("DHCPv6 assignment")
 
 	// STEP 2: Send boot config for iPXE
 	if reqMsg, ok := req.(*dhcpv6.Message); ok {

@@ -16,9 +16,30 @@ import (
 	"github.com/openchami/coresmd/internal/parse"
 )
 
-const (
-	DefaultPattern = "unknown-{04d}"
-)
+const DefaultPattern = "unknown-{04d}"
+
+var AllowedKeys = []string{
+	"continue",
+	"domain",
+	"domain_append",
+	"id",
+	"id_set",
+	"log",
+	"name",
+	"pattern",
+	"subnet",
+	"type",
+}
+
+// KeyAllowed returns true if the passed key is an allowed rule key.
+func KeyAllowed(key string) bool {
+	for _, k := range AllowedKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
 
 // Rule represents a hostname rule
 type Rule struct {
@@ -44,7 +65,7 @@ func (r Rule) MatchIface(ii iface.IfaceInfo) (matches, cont bool) {
 	cont = r.Action.Continue
 
 	matchSet := make(map[string]bool)
-	if r.Match.Types != nil {
+	if r.Match.Types != nil && len(r.Match.Types) > 0 {
 		matchSet["types"] = true
 	}
 	if len(r.Match.Subnets) > 0 {
@@ -246,7 +267,7 @@ func ParseRule(rule string) (Rule, error) {
 		if b, err := parse.ParseBoolLoose(domapp); err != nil {
 			return Rule{}, NewErrInvalidValue("domain_append", domapp, "boolean")
 		} else {
-			a.Continue = b
+			a.DomainAppend = b
 		}
 	}
 
@@ -255,14 +276,22 @@ func ParseRule(rule string) (Rule, error) {
 	// Examples:
 	//  - type=Node                    # single type
 	//  - type=Node|NodeBMC|HSNSwitch  # multiple types
-	if matchType, ok := comps["type"]; ok && matchType != "" {
+	if matchType, ok := comps["type"]; ok && strings.TrimSpace(matchType) != "" {
 		m.Types = make(map[string]bool)
 		for _, t := range strings.Split(matchType, "|") {
-			if t == "" {
+			if tt := strings.TrimSpace(t); tt == "" {
 				continue
+			} else {
+				m.Types[tt] = true
 			}
-			m.Types[t] = true
 		}
+		// 'type' requires at least one type, err if none specified
+		if len(m.Types) == 0 {
+			return Rule{}, NewErrInvalidValue("type", matchType, "at least one type")
+		}
+	} else if ok {
+		// 'type' present but was empty/whitespace
+		return Rule{}, NewErrInvalidValue("type", matchType, "at least one type")
 	}
 
 	// match by subnet (optional; multivalue)
@@ -392,7 +421,7 @@ func LookupHostname(logger *logrus.Entry, ii iface.IfaceInfo, domain, hlog strin
 				pattern = pat
 			}
 
-			setHostname(pattern, domain, ii, rule)
+			hostname = setHostname(pattern, domain, ii, rule)
 
 			if !cont {
 				// Continue not specified for match, so stop here.
@@ -404,6 +433,11 @@ func LookupHostname(logger *logrus.Entry, ii iface.IfaceInfo, domain, hlog strin
 			// list is exhausted.
 			logRejection(idx, rule)
 		}
+	}
+
+	// If no rule matched, fall back to the default pattern and global domain.
+	if strings.TrimSpace(hostname) == "" {
+		hostname = setHostname(pattern, domain, ii, Rule{})
 	}
 
 	return
@@ -422,6 +456,11 @@ func setHostname(pattern, domain string, ii iface.IfaceInfo, rule Rule) (hostnam
 
 	// Handle domain setting
 	if rdom := strings.TrimSpace(rule.Action.Domain); rdom != "" {
+		// domain=none always suppresses any domain behavior (including domain_append).
+		if rdom == "none" {
+			return hostname
+		}
+		rdom = strings.TrimLeft(rdom, ".")
 		if rule.Action.DomainAppend {
 			// Rule domain specified to append, append rule domain to hostname
 			// appended with global domain (if set).
@@ -476,10 +515,12 @@ func createRuleCompDict(rule string) (map[string]string, error) {
 			return nil, NewErrKeyValFormat(idx, p)
 		}
 		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(val)
 		if key == "" {
 			return nil, NewErrNoKey(idx, p)
+		} else if !KeyAllowed(key) {
+			return nil, NewErrUnknownKey(idx, key)
 		}
+		val = strings.TrimSpace(val)
 		val, err := parse.Unquote(val)
 		if err != nil {
 			return nil, NewErrBadQuote(idx, p, err)
