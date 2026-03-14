@@ -11,5 +11,5 @@
 dist/
 
 # Binaries
-coredhcp
-coredns
+/coredhcp
+/coredns
