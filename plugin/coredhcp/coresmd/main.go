@@ -20,19 +20,15 @@ import (
 	"github.com/insomniacslk/dhcp/dhcpv6"
 	"github.com/insomniacslk/dhcp/rfc1035label"
 
+	"github.com/openchami/coresmd/internal/cache"
 	"github.com/openchami/coresmd/internal/debug"
 	"github.com/openchami/coresmd/internal/hostname"
+	"github.com/openchami/coresmd/internal/iface"
 	"github.com/openchami/coresmd/internal/ipxe"
+	"github.com/openchami/coresmd/internal/smdclient"
+	"github.com/openchami/coresmd/internal/tftp"
 	"github.com/openchami/coresmd/internal/version"
 )
-
-type IfaceInfo struct {
-	CompID  string
-	CompNID int64
-	Type    string
-	MAC     string
-	IPList  []net.IP
-}
 
 type Config struct {
 	// Parsed from configuration file
@@ -75,16 +71,13 @@ func (c Config) String() string {
 }
 
 const (
-	defaultTFTPDirectory = "/tftpboot"
-	defaultTFTPPort      = 69
-	defaultCacheValid    = "30s"
-	defaultLeaseTime     = "1h0m0s"
-	defaultBMCPattern    = "bmc{04d}"
-	defaultNodePattern   = "nid{04d}"
+	defaultLeaseTime   = "1h0m0s"
+	defaultBMCPattern  = "bmc{04d}"
+	defaultNodePattern = "nid{04d}"
 )
 
 var (
-	cache        *Cache
+	smdCache     *cache.Cache
 	globalConfig Config
 	log          = logger.GetLogger("plugins/coresmd")
 )
@@ -125,24 +118,25 @@ func setup6(args ...string) (handler.Handler6, error) {
 	globalConfig = cfg
 
 	// Create client to talk to SMD and set validating CA cert
-	smdClient := NewSmdClient(cfg.svcBaseURI)
+	smdClient := smdclient.NewSmdClient(cfg.svcBaseURI)
 	if err := smdClient.UseCACert(cfg.caCert); err != nil {
 		return nil, fmt.Errorf("failed to set CA certificate: %w", err)
 	}
 
 	// Create cache and start fetching
 	var err error
-	if cache, err = NewCache(cfg.cacheValid.String(), smdClient); err != nil {
+	if smdCache, err = cache.NewCache(log, cfg.cacheValid.String(), smdClient); err != nil {
 		return nil, fmt.Errorf("failed to create new cache: %w", err)
 	}
-	cache.RefreshLoop()
+	smdCache.RefreshLoop()
 
 	// Start tftp server
 	log.Infof("starting TFTP server on port %d with directory %s", cfg.tftpPort, cfg.tftpDir)
-	server := &tftpServer{
-		directory:  cfg.tftpDir,
-		port:       cfg.tftpPort,
-		singlePort: cfg.singlePort,
+	server := &tftp.TftpServer{
+		Directory:  cfg.tftpDir,
+		Port:       cfg.tftpPort,
+		SinglePort: cfg.singlePort,
+		Logger:     log,
 	}
 
 	go server.Start()
@@ -177,24 +171,25 @@ func setup4(args ...string) (handler.Handler4, error) {
 	globalConfig = cfg
 
 	// Create client to talk to SMD and set validating CA cert
-	smdClient := NewSmdClient(cfg.svcBaseURI)
+	smdClient := smdclient.NewSmdClient(cfg.svcBaseURI)
 	if err := smdClient.UseCACert(cfg.caCert); err != nil {
 		return nil, fmt.Errorf("failed to set CA certificate: %w", err)
 	}
 
 	// Create cache and start fetching
 	var err error
-	if cache, err = NewCache(cfg.cacheValid.String(), smdClient); err != nil {
+	if smdCache, err = cache.NewCache(log, cfg.cacheValid.String(), smdClient); err != nil {
 		return nil, fmt.Errorf("failed to create new cache: %w", err)
 	}
-	cache.RefreshLoop()
+	smdCache.RefreshLoop()
 
 	// Start tftp server
 	log.Infof("starting TFTP server on port %d with directory %s", cfg.tftpPort, cfg.tftpDir)
-	server := &tftpServer{
-		directory:  cfg.tftpDir,
-		port:       cfg.tftpPort,
-		singlePort: cfg.singlePort,
+	server := &tftp.TftpServer{
+		Directory:  cfg.tftpDir,
+		Port:       cfg.tftpPort,
+		SinglePort: cfg.singlePort,
+		Logger:     log,
 	}
 
 	go server.Start()
@@ -296,14 +291,14 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 			}
 		case "tftp_port":
 			if tftpPort, err := strconv.ParseInt(opt[1], 10, 64); err != nil {
-				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid port '%s' (defaulting to %d): %w", idx, opt[0], opt[1], defaultTFTPPort, err))
-				cfg.tftpPort = defaultTFTPPort
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid port '%s' (defaulting to %d): %w", idx, opt[0], opt[1], tftp.DefaultTFTPPort, err))
+				cfg.tftpPort = tftp.DefaultTFTPPort
 			} else {
 				if tftpPort >= 0 && tftpPort <= 65535 {
 					cfg.tftpPort = int(tftpPort)
 				} else {
-					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: port '%d' out of range, must be between 0-65535 (defaulting to %d)", idx, opt[0], tftpPort, defaultTFTPPort))
-					cfg.tftpPort = defaultTFTPPort
+					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: port '%d' out of range, must be between 0-65535 (defaulting to %d)", idx, opt[0], tftpPort, tftp.DefaultTFTPPort))
+					cfg.tftpPort = tftp.DefaultTFTPPort
 				}
 			}
 		case "bmc_pattern":
@@ -368,8 +363,8 @@ func (c *Config) validate() (warns []string, errs []error) {
 		warns = append(warns, "ca_cert unset, TLS certificates will not be validated")
 	}
 	if c.cacheValid == nil {
-		warns = append(warns, fmt.Sprintf("cache_valid unset, defaulting to %s", defaultCacheValid))
-		duration, err := time.ParseDuration(defaultCacheValid)
+		warns = append(warns, fmt.Sprintf("cache_valid unset, defaulting to %s", cache.DefaultCacheValid))
+		duration, err := time.ParseDuration(cache.DefaultCacheValid)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("unexpected error trying to set default cache_valid: %w", err))
 		} else {
@@ -386,15 +381,15 @@ func (c *Config) validate() (warns []string, errs []error) {
 		}
 	}
 	if c.tftpPort < 0 || c.tftpPort > 65535 {
-		warns = append(warns, fmt.Sprintf("tftp_port %d out of 0-65535 range, defaulting to %d", c.tftpPort, defaultTFTPPort))
-		c.tftpPort = defaultTFTPPort
+		warns = append(warns, fmt.Sprintf("tftp_port %d out of 0-65535 range, defaulting to %d", c.tftpPort, tftp.DefaultTFTPPort))
+		c.tftpPort = tftp.DefaultTFTPPort
 	} else if c.tftpPort == 0 {
-		warns = append(warns, fmt.Sprintf("tftp_port unset (0), defaulting to %d", defaultTFTPPort))
-		c.tftpPort = defaultTFTPPort
+		warns = append(warns, fmt.Sprintf("tftp_port unset (0), defaulting to %d", tftp.DefaultTFTPPort))
+		c.tftpPort = tftp.DefaultTFTPPort
 	}
 	if c.tftpDir == "" {
-		warns = append(warns, fmt.Sprintf("tftp_dir unset, defaulting to %s", defaultTFTPDirectory))
-		c.tftpDir = defaultTFTPDirectory
+		warns = append(warns, fmt.Sprintf("tftp_dir unset, defaulting to %s", tftp.DefaultTFTPDirectory))
+		c.tftpDir = tftp.DefaultTFTPDirectory
 	}
 	if c.bmcPattern == "" {
 		warns = append(warns, fmt.Sprintf("bmc_pattern unset, defaulting to %s", defaultBMCPattern))
@@ -421,12 +416,12 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 	debug.DebugRequest(log, req)
 
 	// Make sure cache doesn't get updated while reading
-	(*cache).Mutex.RLock()
-	defer cache.Mutex.RUnlock()
+	(*smdCache).Mutex.RLock()
+	defer smdCache.Mutex.RUnlock()
 
 	// STEP 1: Assign IP address
 	hwAddr := req.ClientHWAddr.String()
-	ifaceInfo, err := lookupMAC(hwAddr)
+	ifaceInfo, err := iface.LookupMAC(log, hwAddr, smdCache)
 	if err != nil {
 		log.Errorf("IP lookup failed: %v", err)
 		return resp, false
@@ -488,48 +483,12 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 	return resp, true
 }
 
-func lookupMAC(mac string) (IfaceInfo, error) {
-	var ii IfaceInfo
-
-	// Match MAC address with EthernetInterface
-	ei, ok := cache.EthernetInterfaces[mac]
-	if !ok {
-		return ii, fmt.Errorf("no EthernetInterfaces were found in cache for hardware address %s", mac)
-	}
-	ii.MAC = mac
-
-	// If found, make sure Component exists with ID matching to EthernetInterface ID
-	ii.CompID = ei.ComponentID
-	log.Debugf("EthernetInterface found in cache for hardware address %s with ID %s", ii.MAC, ii.CompID)
-	comp, ok := cache.Components[ii.CompID]
-	if !ok {
-		return ii, fmt.Errorf("no Component %s found in cache for EthernetInterface hardware address %s", ii.CompID, ii.MAC)
-	}
-	ii.Type = comp.Type
-	log.Debugf("matching Component of type %s with ID %s found in cache for hardware address %s", ii.Type, ii.CompID, ii.MAC)
-	if ii.Type == "Node" {
-		ii.CompNID = comp.NID
-	}
-	if len(ei.IPAddresses) == 0 {
-		return ii, fmt.Errorf("EthernetInterface for Component %s (type %s) contains no IP addresses for hardware address %s", ii.CompID, ii.Type, ii.MAC)
-	}
-	log.Debugf("IP addresses available for hardware address %s (Component %s of type %s): %v", ii.MAC, ii.CompID, ii.Type, ei.IPAddresses)
-	var ipList []net.IP
-	for _, ipStr := range ei.IPAddresses {
-		ip := net.ParseIP(ipStr.IPAddress)
-		ipList = append(ipList, ip)
-	}
-	ii.IPList = ipList
-
-	return ii, nil
-}
-
 func Handler6(req, resp dhcpv6.DHCPv6) (dhcpv6.DHCPv6, bool) {
 	log.Debugf("DHCPv6 HANDLER CALLED ON MESSAGE TYPE: req(%s), resp(%s)", req.Type(), resp.Type())
 
 	// Make sure cache doesn't get updated while reading
-	(*cache).Mutex.RLock()
-	defer cache.Mutex.RUnlock()
+	(*smdCache).Mutex.RLock()
+	defer smdCache.Mutex.RUnlock()
 
 	// Extract MAC address from DHCPv6 message
 	hwAddr, err := dhcpv6.ExtractMAC(req)
@@ -540,7 +499,7 @@ func Handler6(req, resp dhcpv6.DHCPv6) (dhcpv6.DHCPv6, bool) {
 
 	// STEP 1: Lookup interface info and assign IPv6 address
 	macStr := hwAddr.String()
-	ifaceInfo, err := lookupMAC(macStr)
+	ifaceInfo, err := iface.LookupMAC(log, macStr, smdCache)
 	if err != nil {
 		log.Errorf("IP lookup failed: %v", err)
 		return resp, false

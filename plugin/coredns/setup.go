@@ -15,8 +15,9 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/sirupsen/logrus"
 
+	"github.com/openchami/coresmd/internal/cache"
+	"github.com/openchami/coresmd/internal/smdclient"
 	"github.com/openchami/coresmd/internal/version"
-	"github.com/openchami/coresmd/plugin/coredhcp/coresmd"
 )
 
 // Plugin represents the coresmd plugin
@@ -32,8 +33,8 @@ type Plugin struct {
 	zones []Zone
 
 	// Shared infrastructure
-	cache     *coresmd.Cache
-	smdClient *coresmd.SmdClient
+	cache     *cache.Cache
+	smdClient *smdclient.SmdClient
 }
 
 // Global variables
@@ -217,7 +218,7 @@ func (p *Plugin) OnStartup() error {
 			return fmt.Errorf("failed to parse SMD URL: %w", err)
 		}
 
-		p.smdClient = coresmd.NewSmdClient(baseURL)
+		p.smdClient = smdclient.NewSmdClient(baseURL)
 
 		// Set up CA certificate if provided
 		if p.caCert != "" {
@@ -230,7 +231,7 @@ func (p *Plugin) OnStartup() error {
 		}
 
 		// Create cache
-		p.cache, err = coresmd.NewCache(p.cacheDuration, p.smdClient)
+		p.cache, err = cache.NewCache(log, p.cacheDuration, p.smdClient)
 		if err != nil {
 			return fmt.Errorf("failed to create cache: %w", err)
 		}

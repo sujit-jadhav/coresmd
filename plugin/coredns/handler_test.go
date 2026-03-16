@@ -16,7 +16,8 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/miekg/dns"
 
-	"github.com/openchami/coresmd/plugin/coredhcp/coresmd"
+	"github.com/openchami/coresmd/internal/cache"
+	"github.com/openchami/coresmd/internal/smdclient"
 )
 
 // Mock plugin handler for testing
@@ -35,20 +36,18 @@ func (m *mockHandler) Name() string { return "mock" }
 // createTestPlugin creates a plugin instance with test data
 func createTestPlugin() *Plugin {
 	// Create test cache data - using exact same structure as production
-	cache := &coresmd.Cache{
+	cache := &cache.Cache{
 		Duration:    1 * time.Minute,
-		Client:      &coresmd.SmdClient{},
+		Client:      &smdclient.SmdClient{},
 		LastUpdated: time.Now(),
 		Mutex:       sync.RWMutex{},
-		EthernetInterfaces: map[string]coresmd.EthernetInterface{
+		EthernetInterfaces: map[string]smdclient.EthernetInterface{
 			"00:11:22:33:44:55": {
 				MACAddress:  "00:11:22:33:44:55",
 				ComponentID: "node001",
 				Type:        "Node",
 				Description: "Test Node Interface",
-				IPAddresses: []struct {
-					IPAddress string `json:"IPAddress"`
-				}{
+				IPAddresses: []smdclient.IPAddress{
 					{IPAddress: "192.168.1.10"},
 				},
 			},
@@ -57,14 +56,12 @@ func createTestPlugin() *Plugin {
 				ComponentID: "bmc001",
 				Type:        "NodeBMC",
 				Description: "Test BMC Interface",
-				IPAddresses: []struct {
-					IPAddress string `json:"IPAddress"`
-				}{
+				IPAddresses: []smdclient.IPAddress{
 					{IPAddress: "192.168.1.100"},
 				},
 			},
 		},
-		Components: map[string]coresmd.Component{
+		Components: map[string]smdclient.Component{
 			"node001": {
 				ID:   "node001",
 				NID:  1,
@@ -528,25 +525,23 @@ func makeTestPluginWithPattern(pattern string, nid int, xname, ip string) *Plugi
 				NodePattern: pattern,
 			},
 		},
-		cache: &coresmd.Cache{
+		cache: &cache.Cache{
 			Duration:    1 * time.Minute,
-			Client:      &coresmd.SmdClient{},
+			Client:      &smdclient.SmdClient{},
 			LastUpdated: time.Now(),
 			Mutex:       sync.RWMutex{},
-			EthernetInterfaces: map[string]coresmd.EthernetInterface{
+			EthernetInterfaces: map[string]smdclient.EthernetInterface{
 				xname + "-eth": {
 					MACAddress:  xname + "-eth",
 					ComponentID: xname,
 					Type:        "Node",
 					Description: "Test Node Interface",
-					IPAddresses: []struct {
-						IPAddress string `json:"IPAddress"`
-					}{
+					IPAddresses: []smdclient.IPAddress{
 						{IPAddress: ip},
 					},
 				},
 			},
-			Components: map[string]coresmd.Component{
+			Components: map[string]smdclient.Component{
 				xname: {
 					ID:   xname,
 					NID:  int64(nid),
@@ -585,26 +580,24 @@ func TestLookupA_Patterns(t *testing.T) {
 
 // createTestPluginForBugReport creates a plugin to reproduce the reported bug scenarios
 func createTestPluginForBugReport() *Plugin {
-	cache := &coresmd.Cache{
+	cache := &cache.Cache{
 		Duration:    1 * time.Minute,
-		Client:      &coresmd.SmdClient{},
+		Client:      &smdclient.SmdClient{},
 		LastUpdated: time.Now(),
 		Mutex:       sync.RWMutex{},
-		EthernetInterfaces: map[string]coresmd.EthernetInterface{
+		EthernetInterfaces: map[string]smdclient.EthernetInterface{
 			// BMC with xname x3000c0s0b1 and NID 2 for pattern bmc{03d} = bmc002
 			"11:22:33:44:55:66": {
 				MACAddress:  "11:22:33:44:55:66",
 				ComponentID: "x3000c0s0b1",
 				Type:        "NodeBMC",
 				Description: "BMC for bug report test",
-				IPAddresses: []struct {
-					IPAddress string `json:"IPAddress"`
-				}{
+				IPAddresses: []smdclient.IPAddress{
 					{IPAddress: "192.168.100.10"},
 				},
 			},
 		},
-		Components: map[string]coresmd.Component{
+		Components: map[string]smdclient.Component{
 			"x3000c0s0b1": {
 				ID:   "x3000c0s0b1",
 				NID:  2,
@@ -691,20 +684,18 @@ func TestLookupA_BMC_XName_Direct(t *testing.T) {
 
 // createTestPluginWithIPv6 creates a plugin with both IPv4 and IPv6 addresses
 func createTestPluginWithIPv6() *Plugin {
-	cache := &coresmd.Cache{
+	cache := &cache.Cache{
 		Duration:    1 * time.Minute,
-		Client:      &coresmd.SmdClient{},
+		Client:      &smdclient.SmdClient{},
 		LastUpdated: time.Now(),
 		Mutex:       sync.RWMutex{},
-		EthernetInterfaces: map[string]coresmd.EthernetInterface{
+		EthernetInterfaces: map[string]smdclient.EthernetInterface{
 			"00:11:22:33:44:55": {
 				MACAddress:  "00:11:22:33:44:55",
 				ComponentID: "node001",
 				Type:        "Node",
 				Description: "Test Node with IPv4 and IPv6",
-				IPAddresses: []struct {
-					IPAddress string `json:"IPAddress"`
-				}{
+				IPAddresses: []smdclient.IPAddress{
 					{IPAddress: "192.168.1.10"},
 					{IPAddress: "2001:db8::10"},
 				},
@@ -714,9 +705,7 @@ func createTestPluginWithIPv6() *Plugin {
 				ComponentID: "bmc001",
 				Type:        "NodeBMC",
 				Description: "Test BMC with IPv4 and IPv6",
-				IPAddresses: []struct {
-					IPAddress string `json:"IPAddress"`
-				}{
+				IPAddresses: []smdclient.IPAddress{
 					{IPAddress: "192.168.1.100"},
 					{IPAddress: "2001:db8::100"},
 				},
@@ -726,14 +715,12 @@ func createTestPluginWithIPv6() *Plugin {
 				ComponentID: "node002",
 				Type:        "Node",
 				Description: "Test Node with IPv6 only",
-				IPAddresses: []struct {
-					IPAddress string `json:"IPAddress"`
-				}{
+				IPAddresses: []smdclient.IPAddress{
 					{IPAddress: "2001:db8::20"},
 				},
 			},
 		},
-		Components: map[string]coresmd.Component{
+		Components: map[string]smdclient.Component{
 			"node001": {
 				ID:   "node001",
 				NID:  1,

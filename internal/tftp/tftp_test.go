@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-package coresmd
+package tftp
 
 import (
 	"bytes"
@@ -122,7 +122,7 @@ func TestReadHandler_DefaultScript(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := readHandler("/ignored/for/default")
+			h := readHandler(nil, "/ignored/for/default")
 
 			err := h(defaultScriptName, tt.readerFrom)
 			if err != nil {
@@ -178,14 +178,20 @@ func TestReadHandler_FileCases(t *testing.T) {
 		{
 			name:        "existing file with OutgoingTransfer",
 			filename:    fileName,
-			readerFrom:  &recorderOutgoingTransfer{},
+			readerFrom:  &recorderOutgoingTransfer{addr: net.UDPAddr{IP: net.ParseIP("192.0.2.2"), Port: 69}},
 			wantErr:     false,
 			wantContent: fileContent,
 		},
 		{
 			name:       "missing file",
 			filename:   "no_such_file.ipxe",
-			readerFrom: &recorderOutgoingTransfer{},
+			readerFrom: &recorderOutgoingTransfer{addr: net.UDPAddr{IP: net.ParseIP("192.0.2.3"), Port: 69}},
+			wantErr:    true,
+		},
+		{
+			name:       "outgoing transfer with nil remote ip",
+			filename:   fileName,
+			readerFrom: &recorderOutgoingTransfer{addr: net.UDPAddr{IP: nil, Port: 69}},
 			wantErr:    true,
 		},
 		{
@@ -197,7 +203,7 @@ func TestReadHandler_FileCases(t *testing.T) {
 		},
 	}
 
-	h := readHandler(tmpDir)
+	h := readHandler(nil, tmpDir)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

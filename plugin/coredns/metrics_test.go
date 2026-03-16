@@ -12,7 +12,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/openchami/coresmd/plugin/coredhcp/coresmd"
+	"github.com/openchami/coresmd/internal/cache"
+	"github.com/openchami/coresmd/internal/smdclient"
 )
 
 func TestMetricsRegistration(t *testing.T) {
@@ -41,7 +42,7 @@ func TestReadyFunction(t *testing.T) {
 	}
 
 	// Test Ready function with empty cache
-	p.cache = &coresmd.Cache{
+	p.cache = &cache.Cache{
 		Duration:    1 * time.Minute,
 		LastUpdated: time.Time{}, // Zero time
 		Mutex:       sync.RWMutex{},
@@ -52,7 +53,7 @@ func TestReadyFunction(t *testing.T) {
 
 	// Test Ready function with valid cache
 	p.cache.LastUpdated = time.Now()
-	p.cache.EthernetInterfaces = map[string]coresmd.EthernetInterface{
+	p.cache.EthernetInterfaces = map[string]smdclient.EthernetInterface{
 		"test": {
 			MACAddress:  "00:11:22:33:44:55",
 			ComponentID: "test001",

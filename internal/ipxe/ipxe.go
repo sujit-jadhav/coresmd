@@ -14,10 +14,13 @@ import (
 )
 
 func ServeIPXEBootloader(l *logrus.Entry, req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
+	if l == nil {
+		l = logrus.NewEntry(logrus.New())
+	}
 	if req.Options.Has(dhcpv4.OptionClientSystemArchitectureType) {
 		var carch iana.Arch
 		carchBytes := req.Options.Get(dhcpv4.OptionClientSystemArchitectureType)
-		l.Debugf("client architecture of %s is %v (%q)", req.ClientHWAddr, carchBytes, string(carchBytes))
+		l.WithField("mac", req.ClientHWAddr).Debugf("client architecture is %v (%q)", carchBytes, string(carchBytes))
 		carch = iana.Arch(binary.BigEndian.Uint16(carchBytes))
 		switch carch {
 		case iana.INTEL_X86PC:
@@ -41,11 +44,15 @@ func ServeIPXEBootloader(l *logrus.Entry, req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHC
 			resp.Options.Update(dhcpv4.OptBootFileName("ipxe-arm64.efi"))
 			return resp, true
 		default:
-			l.Errorf("no iPXE bootloader available for unknown architecture: %d (%s)", carch, carch.String())
+			l.WithFields(logrus.Fields{
+				"mac":     req.ClientHWAddr,
+				"arch_id": carch,
+				"arch":    carch.String(),
+			}).Info("no iPXE bootloader available for unknown architecture)")
 			return resp, false
 		}
 	} else {
-		l.Errorf("client did not present an architecture, unable to provide correct iPXE bootloader")
+		l.WithField("mac", req.ClientHWAddr).Infof("client did not present an architecture, unable to provide correct iPXE bootloader")
 		return resp, false
 	}
 }
