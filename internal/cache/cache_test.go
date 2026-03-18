@@ -3,17 +3,19 @@
 //
 // SPDX-License-Identifier: MIT
 
-package coresmd
+package cache
 
 import (
 	"testing"
 	"time"
+
+	"github.com/openchami/coresmd/internal/smdclient"
 )
 
 func TestNewCache(t *testing.T) {
 	type args struct {
 		duration string
-		client   *SmdClient
+		client   *smdclient.SmdClient
 	}
 
 	tests := []struct {
@@ -26,7 +28,7 @@ func TestNewCache(t *testing.T) {
 			name: "valid_duration_and_client",
 			args: args{
 				duration: "10m",
-				client:   &SmdClient{},
+				client:   &smdclient.SmdClient{},
 			},
 			wantErr:      false,
 			wantDuration: 10 * time.Minute,
@@ -35,7 +37,7 @@ func TestNewCache(t *testing.T) {
 			name: "zero_duration_and_valid_client_ok",
 			args: args{
 				duration: "0s",
-				client:   &SmdClient{},
+				client:   &smdclient.SmdClient{},
 			},
 			wantErr:      false,
 			wantDuration: 0,
@@ -44,7 +46,7 @@ func TestNewCache(t *testing.T) {
 			name: "invalid_duration_string_returns_error",
 			args: args{
 				duration: "not_a_duration",
-				client:   &SmdClient{},
+				client:   &smdclient.SmdClient{},
 			},
 			wantErr: true,
 		},
@@ -68,7 +70,7 @@ func TestNewCache(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cache, err := NewCache(tt.args.duration, tt.args.client)
+			cache, err := NewCache(nil, tt.args.duration, tt.args.client)
 
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("NewCache() error = %v, wantErr %v", err, tt.wantErr)

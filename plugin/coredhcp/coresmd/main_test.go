@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openchami/coresmd/internal/cache"
 	"github.com/openchami/coresmd/internal/hostname"
+	"github.com/openchami/coresmd/internal/tftp"
 )
 
 // TestConfigString ensures String() includes the key fields in a stable format.
@@ -244,7 +246,7 @@ func TestParseConfig_Table(t *testing.T) {
 			},
 			wantCfg: func() Config {
 				return Config{
-					tftpPort: defaultTFTPPort,
+					tftpPort: tftp.DefaultTFTPPort,
 				}
 			},
 			wantErrsMin: 1,
@@ -256,7 +258,7 @@ func TestParseConfig_Table(t *testing.T) {
 			},
 			wantCfg: func() Config {
 				return Config{
-					tftpPort: defaultTFTPPort,
+					tftpPort: tftp.DefaultTFTPPort,
 				}
 			},
 			wantErrsMin: 1,
@@ -401,17 +403,17 @@ func TestConfigValidate_Table(t *testing.T) {
 			wantWarnMin: 5,
 			wantErrMin:  0,
 			check: func(t *testing.T, cfg Config) {
-				if cfg.cacheValid == nil || cfg.cacheValid.String() != defaultCacheValid {
-					t.Errorf("cacheValid = %v, want %s", cfg.cacheValid, defaultCacheValid)
+				if cfg.cacheValid == nil || cfg.cacheValid.String() != cache.DefaultCacheValid {
+					t.Errorf("cacheValid = %v, want %s", cfg.cacheValid, cache.DefaultCacheValid)
 				}
 				if cfg.leaseTime == nil || cfg.leaseTime.String() != defaultLeaseTime {
 					t.Errorf("leaseTime = %v, want %s", cfg.leaseTime, defaultLeaseTime)
 				}
-				if cfg.tftpPort != defaultTFTPPort {
-					t.Errorf("tftpPort = %d, want %d", cfg.tftpPort, defaultTFTPPort)
+				if cfg.tftpPort != tftp.DefaultTFTPPort {
+					t.Errorf("tftpPort = %d, want %d", cfg.tftpPort, tftp.DefaultTFTPPort)
 				}
-				if cfg.tftpDir != defaultTFTPDirectory {
-					t.Errorf("tftpDir = %q, want %q", cfg.tftpDir, defaultTFTPDirectory)
+				if cfg.tftpDir != tftp.DefaultTFTPDirectory {
+					t.Errorf("tftpDir = %q, want %q", cfg.tftpDir, tftp.DefaultTFTPDirectory)
 				}
 				if cfg.bmcPattern != defaultBMCPattern {
 					t.Errorf("bmcPattern = %q, want %q", cfg.bmcPattern, defaultBMCPattern)
@@ -434,8 +436,8 @@ func TestConfigValidate_Table(t *testing.T) {
 			wantWarnMin: 1,
 			wantErrMin:  0,
 			check: func(t *testing.T, cfg Config) {
-				if cfg.tftpPort != defaultTFTPPort {
-					t.Errorf("tftpPort = %d, want %d", cfg.tftpPort, defaultTFTPPort)
+				if cfg.tftpPort != tftp.DefaultTFTPPort {
+					t.Errorf("tftpPort = %d, want %d", cfg.tftpPort, tftp.DefaultTFTPPort)
 				}
 				if cfg.bmcPattern != defaultBMCPattern {
 					t.Errorf("bmcPattern = %q, want %q", cfg.bmcPattern, defaultBMCPattern)

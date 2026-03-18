@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-package coresmd
+package smdclient
 
 import (
 	"crypto/tls"
@@ -27,13 +27,16 @@ type SmdClient struct {
 }
 
 type EthernetInterface struct {
-	MACAddress  string `json:"MACAddress"`
-	ComponentID string `json:"ComponentID"`
-	Type        string `json:"Type"`
-	Description string `json:"Description"`
-	IPAddresses []struct {
-		IPAddress string `json:"IPAddress"`
-	} `json:"IPAddresses"`
+	MACAddress  string      `json:"MACAddress"`
+	ComponentID string      `json:"ComponentID"`
+	Type        string      `json:"Type"`
+	Description string      `json:"Description"`
+	IPAddresses []IPAddress `json:"IPAddresses"`
+}
+
+// SMD is weird and uses an embedded struct like this
+type IPAddress struct {
+	IPAddress string `json:"IPAddress"`
 }
 
 type Component struct {

@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-package coresmd
+package smdclient
 
 import (
 	"encoding/json"
@@ -365,9 +365,7 @@ func TestEthernetInterfaceJSON(t *testing.T) {
 				ComponentID: "comp-1",
 				Type:        "Ethernet",
 				Description: "test interface",
-				IPAddresses: []struct {
-					IPAddress string `json:"IPAddress"`
-				}{
+				IPAddresses: []IPAddress{
 					{IPAddress: "192.0.2.1"},
 				},
 			},
@@ -389,9 +387,7 @@ func TestEthernetInterfaceJSON(t *testing.T) {
 				ComponentID: "comp-2",
 				Type:        "Ethernet",
 				Description: "another interface",
-				IPAddresses: []struct {
-					IPAddress string `json:"IPAddress"`
-				}{
+				IPAddresses: []IPAddress{
 					{IPAddress: "198.51.100.10"},
 					{IPAddress: "198.51.100.11"},
 				},
