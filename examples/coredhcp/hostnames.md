@@ -165,7 +165,8 @@ Values may be quoted with single or double quotes:
 hostname_rule=type=Node,pattern="rack42-{id}"
 ```
 
-Unknown keys are rejected. Duplicate keys in a rule are rejected.
+Unknown keys are rejected as an error. Duplicate keys in a rule are rejected as
+an error.
 
 If no rule matches, CoreSMD falls back to the built-in default pattern:
 `unknown-{04d}`
