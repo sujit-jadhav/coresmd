@@ -5,14 +5,18 @@
 package rule
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 
+	"github.com/insomniacslk/dhcp/dhcpv4"
+	"github.com/insomniacslk/dhcp/dhcpv6"
+	"github.com/insomniacslk/dhcp/rfc1035label"
 	"github.com/sirupsen/logrus"
 
-	"github.com/openchami/coresmd/internal/hostname"
 	"github.com/openchami/coresmd/internal/iface"
 	"github.com/openchami/coresmd/internal/parse"
 )
@@ -23,11 +27,12 @@ var AllowedKeys = []string{
 	"continue",
 	"domain",
 	"domain_append",
+	"hostname",
 	"id",
 	"id_set",
 	"log",
 	"name",
-	"pattern",
+	"routers",
 	"subnet",
 	"type",
 }
@@ -134,16 +139,12 @@ func (m Match) String() string {
 	var matchStr string
 
 	if m.Types != nil {
-		var notfirst bool
-		typStr := ",types:"
+		keys := make([]string, 0, len(m.Types))
 		for typ := range m.Types {
-			if notfirst {
-				typStr += fmt.Sprintf("|%s", typ)
-			} else {
-				typStr += fmt.Sprintf("%s", typ)
-				notfirst = true
-			}
+			keys = append(keys, typ)
 		}
+		sort.Strings(keys)
+		typStr := ",types:" + strings.Join(keys, "|")
 		matchStr += typStr
 	}
 
@@ -174,18 +175,19 @@ func (m Match) String() string {
 
 // Action represents an action to take upon a rule matching
 type Action struct {
-	Pattern      string // hostname pattern to apply
-	Domain       string // domain to append to hostname, overrides global domain, "none" ignores
-	DomainAppend bool   // whether to append domain or override it
-	Continue     bool   // whether to continue parsing subsequent rules if this matches
+	Hostname     string   // hostname pattern to apply
+	Domain       string   // domain to append to hostname, overrides global domain, "none" ignores
+	DomainAppend bool     // whether to append domain or override it
+	Routers      []net.IP // router IPs for selected component(s)
+	Continue     bool     // whether to continue parsing subsequent rules if this matches
 }
 
 func (a Action) String() string {
 	var actionStr string
 
-	pat := strings.TrimSpace(a.Pattern)
-	if pat != "" {
-		actionStr += fmt.Sprintf(",pattern:%s", pat)
+	hn := strings.TrimSpace(a.Hostname)
+	if hn != "" {
+		actionStr += fmt.Sprintf(",hostname:%s", hn)
 	}
 
 	dom := strings.TrimSpace(a.Domain)
@@ -195,6 +197,14 @@ func (a Action) String() string {
 
 	actionStr += fmt.Sprintf(",domain_append:%v", a.DomainAppend)
 	actionStr += fmt.Sprintf(",continue:%v", a.Continue)
+
+	if len(a.Routers) > 0 {
+		parts := make([]string, 0, len(a.Routers))
+		for _, r := range a.Routers {
+			parts = append(parts, r.String())
+		}
+		actionStr += fmt.Sprintf(",routers:%s", strings.Join(parts, "|"))
+	}
 
 	return strings.TrimLeft(actionStr, ",")
 }
@@ -243,11 +253,26 @@ func ParseRule(rule string) (Rule, error) {
 		r.Name = name
 	}
 
-	// pattern (action)
-	if pat, ok := comps["pattern"]; ok && pat != "" {
-		a.Pattern = pat
-	} else {
-		return Rule{}, NewErrRequiredKey("pattern")
+	// hostname (action)
+	if hn, ok := comps["hostname"]; ok && hn != "" {
+		a.Hostname = hn
+	}
+
+	// router (action)
+	if rtrs, ok := comps["routers"]; ok && rtrs != "" {
+		for _, r := range strings.Split(rtrs, "|") {
+			if ip := net.ParseIP(strings.TrimSpace(r)); ip == nil {
+				return Rule{}, NewErrInvalidValue("routers", r, "valid IP address")
+			} else {
+				a.Routers = append(a.Routers, ip)
+			}
+		}
+	}
+
+	// At least one action is required
+	if a.Hostname == "" &&
+		len(a.Routers) == 0 {
+		return Rule{}, NewErrRequiredKeys("hostname", "routers")
 	}
 
 	// domain override (optional)
@@ -344,34 +369,41 @@ func ParseRule(rule string) (Rule, error) {
 	return r, nil
 }
 
-// LookupHostname takes interface information and a list of hostname rules and
-// returns the hostname resulting from evaluating the rules in the list. It also
-// takes a logger so rules can be logged, if enabled.
-func LookupHostname(logger *logrus.Entry, ii iface.IfaceInfo, domain, hlog string, hrules []Rule) (hostname string) {
+// Evaluate4 takes interface information from a DHCPv4 request and a list of
+// rules to evaluate and modifies the passed DHCPv4 response according to the
+// rules.
+//
+// A logger object is passed for logging function operations. If nil, it will be
+// initialized with default values.
+//
+// The global settings globalDomain and ruleLog are also passed for effecting
+// rule evaluation behavior.
+func Evaluate4(logger *logrus.Entry, ii iface.IfaceInfo, globalDomain, ruleLog string, resp *dhcpv4.DHCPv4, rules []Rule) {
+	// Init default logger if unset
 	if logger == nil {
 		logger = logrus.NewEntry(logrus.New())
 	}
-	logRejection := func(idx int, rule Rule) {
-		var rejectEnabled bool
-		switch hlog {
+	logMismatch := func(idx int, rule Rule) {
+		var loggingEnabled bool
+		switch ruleLog {
 		case "debug":
-			rejectEnabled = true
+			loggingEnabled = true
 		case "", "info", "none":
 			// Do nothing
 		default:
-			err := NewErrInvalidValue("hostname_log", hlog, "'debug', 'info', or 'none'")
+			err := NewErrInvalidValue("rule_log", ruleLog, "'debug', 'info', or 'none'")
 			logger.Error(err)
 		}
 		switch rule.Log {
 		case "debug":
-			rejectEnabled = true
+			loggingEnabled = true
 		case "", "info", "none":
 			// Do nothing
 		default:
 			err := NewErrInvalidValue("log", rule.Log, "'debug', 'info', or 'none'")
 			logger.Errorf("rule[%d] (%s) %v", idx, rule.Name, err)
 		}
-		if rejectEnabled {
+		if loggingEnabled {
 			logger.WithFields(logrus.Fields{
 				"comp_id":   ii.CompID,
 				"comp_nid":  ii.CompNID,
@@ -382,26 +414,26 @@ func LookupHostname(logger *logrus.Entry, ii iface.IfaceInfo, domain, hlog strin
 		}
 	}
 	logMatch := func(idx int, rule Rule) {
-		var matchEnabled bool
-		switch hlog {
+		var loggingEnabled bool
+		switch ruleLog {
 		case "debug", "info":
-			matchEnabled = true
+			loggingEnabled = true
 		case "", "none":
 			// Do nothing
 		default:
-			err := NewErrInvalidValue("hostname_log", hlog, "'debug', 'info', or 'none'")
+			err := NewErrInvalidValue("rule_log", ruleLog, "'debug', 'info', or 'none'")
 			logger.Error(err)
 		}
 		switch rule.Log {
 		case "debug":
-			matchEnabled = true
+			loggingEnabled = true
 		case "", "info", "none":
 			// Do nothing
 		default:
 			err := NewErrInvalidValue("log", rule.Log, "'debug', 'info', or 'none'")
 			logger.Errorf("rule[%d] (%s) %v", idx, rule.Name, err)
 		}
-		if matchEnabled {
+		if loggingEnabled {
 			logger.WithFields(logrus.Fields{
 				"comp_id":   ii.CompID,
 				"comp_nid":  ii.CompNID,
@@ -412,80 +444,155 @@ func LookupHostname(logger *logrus.Entry, ii iface.IfaceInfo, domain, hlog strin
 		}
 	}
 
-	pattern := DefaultPattern
-	for idx, rule := range hrules {
+	for idx, rule := range rules {
 		matches, cont := rule.MatchIface(ii)
 		if matches {
 			logMatch(idx, rule)
 
-			// Rule matches, so set the pattern.
-			if pat := strings.TrimSpace(rule.Action.Pattern); pat != "" {
-				pattern = pat
+			//
+			// PERFORM ACTIONS HERE
+			//
+
+			// Set hostname
+			if hn := strings.TrimSpace(rule.Action.Hostname); hn != "" {
+				resp.Options.Update(dhcpv4.OptHostName(lookupHostname(hn, globalDomain, ii, rule)))
 			}
 
-			hostname = setHostname(pattern, domain, ii, rule)
+			// Set routers
+			if len(rule.Action.Routers) > 0 {
+				resp.Options.Update(dhcpv4.OptRouter(rule.Action.Routers...))
+			}
 
 			if !cont {
-				// Continue not specified for match, so stop here.
+				// Continue not specified for match, so stop here
 				break
 			}
 		} else {
-			// Continue only matters for matching, so not matching means we
-			// continue searching rules until either one matches or the rule
-			// list is exhausted.
-			logRejection(idx, rule)
+			logMismatch(idx, rule)
 		}
 	}
 
-	// If no rule matched, fall back to the default pattern and global domain.
-	if strings.TrimSpace(hostname) == "" {
-		hostname = setHostname(pattern, domain, ii, Rule{})
-	}
+	//
+	// DEFAULT ACTIONS GO HERE
+	//
 
-	return
+	// If no hostname was set, fall back to default pattern and global domain
+	if len(bytes.TrimSpace(resp.Options.Get(dhcpv4.OptionHostName))) == 0 {
+		resp.Options.Update(dhcpv4.OptHostName(lookupHostname(DefaultPattern, globalDomain, ii, Rule{})))
+	}
 }
 
-func setHostname(pattern, domain string, ii iface.IfaceInfo, rule Rule) (hname string) {
-	// Compile hostname from pattern
-	hname = hostname.ExpandHostnamePattern(pattern, ii.CompNID, ii.CompID)
-
-	// Trim global domain, if set
-	if dom := strings.TrimSpace(domain); dom != "" {
-		domain = dom
-	} else {
-		domain = ""
+// Evaluate6 takes interface information from a DHCPv6 request and a list of
+// rules to evaluate and modifies the passed DHCPv6 response according to the
+// rules.
+//
+// A logger object is passed for logging function operations. If nil, it will be
+// initialized with default values.
+//
+// The global settings globalDomain and ruleLog are also passed for effecting
+// rule evaluation behavior.
+func Evaluate6(logger *logrus.Entry, ii iface.IfaceInfo, globalDomain, ruleLog string, resp *dhcpv6.Message, rules []Rule) {
+	// Init default logger if unset
+	if logger == nil {
+		logger = logrus.NewEntry(logrus.New())
+	}
+	logMismatch := func(idx int, rule Rule) {
+		var loggingEnabled bool
+		switch ruleLog {
+		case "debug":
+			loggingEnabled = true
+		case "", "info", "none":
+			// Do nothing
+		default:
+			err := NewErrInvalidValue("rule_log", ruleLog, "'debug', 'info', or 'none'")
+			logger.Error(err)
+		}
+		switch rule.Log {
+		case "debug":
+			loggingEnabled = true
+		case "", "info", "none":
+			// Do nothing
+		default:
+			err := NewErrInvalidValue("log", rule.Log, "'debug', 'info', or 'none'")
+			logger.Errorf("rule[%d] (%s) %v", idx, rule.Name, err)
+		}
+		if loggingEnabled {
+			logger.WithFields(logrus.Fields{
+				"comp_id":   ii.CompID,
+				"comp_nid":  ii.CompNID,
+				"comp_type": ii.Type,
+				"mac":       ii.MAC,
+				"ips":       ii.IPList,
+			}).Infof("rule[%d] (%s) did not match", idx, rule.Name)
+		}
+	}
+	logMatch := func(idx int, rule Rule) {
+		var loggingEnabled bool
+		switch ruleLog {
+		case "debug", "info":
+			loggingEnabled = true
+		case "", "none":
+			// Do nothing
+		default:
+			err := NewErrInvalidValue("rule_log", ruleLog, "'debug', 'info', or 'none'")
+			logger.Error(err)
+		}
+		switch rule.Log {
+		case "debug":
+			loggingEnabled = true
+		case "", "info", "none":
+			// Do nothing
+		default:
+			err := NewErrInvalidValue("log", rule.Log, "'debug', 'info', or 'none'")
+			logger.Errorf("rule[%d] (%s) %v", idx, rule.Name, err)
+		}
+		if loggingEnabled {
+			logger.WithFields(logrus.Fields{
+				"comp_id":   ii.CompID,
+				"comp_nid":  ii.CompNID,
+				"comp_type": ii.Type,
+				"mac":       ii.MAC,
+				"ips":       ii.IPList,
+			}).Infof("rule[%d] (%s) matched", idx, rule.Name)
+		}
 	}
 
-	// Handle domain setting
-	if rdom := strings.TrimSpace(rule.Action.Domain); rdom != "" {
-		// domain=none always suppresses any domain behavior (including domain_append).
-		if rdom == "none" {
-			return hname
-		}
-		rdom = strings.TrimLeft(rdom, ".")
-		if rule.Action.DomainAppend {
-			// Rule domain specified to append, append rule domain to hname
-			// appended with global domain (if set).
-			if domain != "" {
-				hname = fmt.Sprintf("%s.%s.%s", hname, strings.TrimLeft(domain, "."), strings.TrimLeft(rdom, "."))
-			} else {
-				// Append specified, but global domain was not set. Use only
-				// rule domain.
-				hname = fmt.Sprintf("%s.%s", hname, strings.TrimLeft(rdom, "."))
+	for idx, rule := range rules {
+		matches, cont := rule.MatchIface(ii)
+		if matches {
+			logMatch(idx, rule)
+
+			//
+			// PERFORM ACTIONS HERE
+			//
+
+			// Set hostname
+			if hn := strings.TrimSpace(rule.Action.Hostname); hn != "" {
+				hname := lookupHostname(hn, globalDomain, ii, rule)
+				labels := &rfc1035label.Labels{Labels: strings.Split(hname, ".")}
+				resp.UpdateOption(&dhcpv6.OptFQDN{Flags: 0, DomainName: labels})
+			}
+
+			if !cont {
+				// Continue not specified for match, so stop here
+				break
 			}
 		} else {
-			// Rule domain specified to replace global domain, do so.
-			hname = fmt.Sprintf("%s.%s", hname, strings.TrimLeft(rdom, "."))
-		}
-	} else {
-		// Rule domain was not specified, DomainAppend setting doesn't matter.
-		// Append the global domain only if set.
-		if domain != "" {
-			hname = fmt.Sprintf("%s.%s", hname, strings.TrimLeft(domain, "."))
+			logMismatch(idx, rule)
 		}
 	}
 
-	return
+	//
+	// DEFAULT ACTIONS GO HERE
+	//
+
+	// If no hostname was set, fall back to default pattern and global domain
+	opt := resp.GetOneOption(dhcpv6.OptionFQDN)
+	if opt == nil || strings.TrimSpace(opt.String()) == "" {
+		hname := lookupHostname(DefaultPattern, globalDomain, ii, Rule{})
+		labels := &rfc1035label.Labels{Labels: strings.Split(hname, ".")}
+		resp.UpdateOption(&dhcpv6.OptFQDN{Flags: 0, DomainName: labels})
+	}
 }
 
 // createRuleCompDict parses a rule string and creates a map of each rule
@@ -503,7 +610,7 @@ func createRuleCompDict(rule string) (map[string]string, error) {
 		return nil, err
 	}
 
-		// Parse each rule component (key:val) and place into dictionary
+	// Parse each rule component (key:val) and place into dictionary
 	comps := make(map[string]string, len(parts))
 	for idx, p := range parts {
 		// Skip empty space

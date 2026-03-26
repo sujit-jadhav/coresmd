@@ -36,11 +36,11 @@ server4:
         ipxe_base_uri=http://192.168.1.1:8081
         cache_valid=30s
         lease_time=24h
-        /* Hostname policy rules (see examples/coredhcp/hostnames.md) */
-        hostname_rule=type:Node,pattern:nid{04d}
-        hostname_rule=type:HSNSwitch,pattern:{id}
-        /* OPTIONAL: override built-in fallback (default is unknown-{04d}) */
-        hostname_rule=pattern:unknown-{04d}
+        /* Rules (see examples/coredhcp/hostnames.md) */
+        rule=type:Node,hostname:nid{04d}
+        rule=type:HSNSwitch,hostname:{id}
+        /* OPTIONAL: override built-in fallback hostname (default is unknown-{04d}) */
+        rule=hostname:unknown-{04d}
 
 ###############################################################################
 # DHCPv6 Configuration
@@ -64,8 +64,8 @@ server6:
         ipxe_base_uri=http://[fd00::1]:8081
         cache_valid=30s
         lease_time=24h
-        /* Hostname policy rules (see examples/coredhcp/hostnames.md) */
-        hostname_rule=type:Node,pattern:nid{04d}
-        hostname_rule=type:HSNSwitch,pattern:{id}
-        /* OPTIONAL: override built-in fallback (default is unknown-{04d}) */
-        hostname_rule=pattern:unknown-{04d}
+        /* Rules (see examples/coredhcp/hostnames.md) */
+        rule=type:Node,hostname:nid{04d}
+        rule=type:HSNSwitch,hostname:{id}
+        /* OPTIONAL: override built-in fallback hostname (default is unknown-{04d}) */
+        rule=hostname:unknown-{04d}

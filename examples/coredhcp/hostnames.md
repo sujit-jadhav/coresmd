@@ -5,18 +5,18 @@ SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
 SPDX-License-Identifier: MIT
 -->
 
-# Hostname Rules for the CoreSMD CoreDHCP Plugin
+# Rules for the CoreSMD CoreDHCP Plugin (Hostnames and Routers)
 
 ## Contents
 
-- [Hostname Rules for the CoreSMD CoreDHCP Plugin](#hostname-rules-for-the-coresmd-coredhcp-plugin)
+- [Rules for the CoreSMD CoreDHCP Plugin (Hostnames and Routers)](#rules-for-the-coresmd-coredhcp-plugin-hostnames-and-routers)
   - [Contents](#contents)
   - [Quick Start](#quick-start)
   - [Summary](#summary)
   - [CoreSMD Configuration Directives](#coresmd-configuration-directives)
     - [`domain=DOMAIN`](#domaindomain)
-    - [`hostname_log={info|debug|none}`](#hostname_loginfodebugnone)
-    - [`hostname_rule=RULE`](#hostname_rulerule)
+    - [`rule_log={info|debug|none}`](#rule_loginfodebugnone)
+    - [`rule=RULE`](#rulerule)
   - [Migrating from `*_pattern`](#migrating-from-_pattern)
   - [Pattern Syntax](#pattern-syntax)
     - [`{Nd}` - Zero-Padded NID](#nd---zero-padded-nid)
@@ -28,8 +28,9 @@ SPDX-License-Identifier: MIT
       - [`id:XNAME`](#idxname)
       - [`id_set:EXPR`](#id_setexpr)
     - [Action Keys](#action-keys)
-      - [`pattern:PATTERN` (required)](#patternpattern-required)
+      - [`hostname:PATTERN`](#hostnamepattern-optional)
       - [`domain:DOMAIN`](#domaindomain-1)
+      - [`routers:X.X.X.X|Y.Y.Y.Y`](#routersxxxxxxxyyyyyyyy)
       - [`domain_append:{true|false}`](#domain_appendtruefalse)
       - [`continue:{true|false}`](#continuetruefalse)
       - [`name:STRING`](#namestring)
@@ -40,9 +41,10 @@ SPDX-License-Identifier: MIT
     - [2. Add a domain suffix](#2-add-a-domain-suffix)
     - [3. Per-type rules](#3-per-type-rules)
     - [4. Subnet-specific BMC naming](#4-subnet-specific-bmc-naming)
-    - [5. Suppress domain suffix for selected hosts](#5-suppress-domain-suffix-for-selected-hosts)
-    - [6. Hostname override with `continue`](#6-hostname-override-with-continue)
-    - [7. Familiar "legacy-style" configuration, expressed as rules](#7-familiar-legacy-style-configuration-expressed-as-rules)
+    - [5. Per-subnet routers (DHCPv4 option 3)](#5-per-subnet-routers-dhcpv4-option-3)
+    - [6. Suppress domain suffix for selected hosts](#6-suppress-domain-suffix-for-selected-hosts)
+    - [7. Hostname override with `continue`](#7-hostname-override-with-continue)
+    - [8. Familiar "legacy-style" configuration, expressed as rules](#8-familiar-legacy-style-configuration-expressed-as-rules)
   - [Caveats](#caveats)
   - [See Also](#see-also)
 
@@ -57,26 +59,27 @@ In a CoreDHCP configuration:
     cache_valid=30s
     lease_time=24h
     domain=cluster.local
-    hostname_log=info
+    rule_log=info
 
-    /* Nodes */
-    hostname_rule=type:Node,pattern:nid{04d}
+    /* Set node hostnames */
+    rule=type:Node,hostname:nid{04d}
 
-    /* BMCs */
-    hostname_rule=type:NodeBMC,pattern:{id}
+    /* Set BMC hostnames */
+    rule=type:NodeBMC,hostname:{id}
 ```
 
 ## Summary
 
-CoreSMD can set DHCP option 12 (Host Name) using an ordered list of _hostname
-rules_. Each rule matches on SMD inventory attributes (component type, component
-ID, and the assigned IP address) and produces a hostname from a pattern.
+CoreSMD can set various DHCP options (e.g. hostname (12), routers (3)) using an
+ordered list of rules. Each rule matches on SMD inventory attributes (component
+type, component ID, and the assigned IP address) and sets the appropriate DHCP
+options based on the actions defined in the rule.
 
-Rules are evaluated in order. A matching rule produces a hostname and may stop
-evaluation (the default or if `continue:false`) or allow evaluation to continue
-(`continue:true`).
+Rules are evaluated in order. A matching rule sets the relevant DHCP options
+and may halt evaluation (the default or if `continue:false`) or allow
+evaluation to continue (`continue:true`).
 
-Within a `coresmd` configurationblock, comments use C-style delimiters: `/* ...
+Within a `coresmd` configuration block, comments use C-style delimiters: `/* ...
 */`.
 
 ## CoreSMD Configuration Directives
@@ -88,7 +91,7 @@ specifies its own domain behavior. Leading dots are ignored.
 
 **Default:** none
 
-### `hostname_log={info|debug|none}`
+### `rule_log={info|debug|none}`
 
 Controls rule logging.
 
@@ -98,21 +101,23 @@ Controls rule logging.
 
 **Default:** `none`
 
-### `hostname_rule=RULE`
+### `rule=RULE`
 
-Add a hostname rule. May be specified multiple times. **Order matters!**
+Add a rule. May be specified multiple times. **Order matters!**
+
+A rule may set a hostname (DHCP option 12) and/or routers (DHCPv4 option 3).
 
 ## Migrating from `*_pattern`
 
 Older CoreSMD configurations used legacy pattern directives (for example
-`node_pattern` and `bmc_pattern`). These are replaced by `hostname_rule=`.
+`node_pattern` and `bmc_pattern`). These are replaced by `rule=`.
 
-The equivalent `hostname_rule=` forms are:
+The equivalent `rule=` forms are:
 
 | **Old Config** | **New Config** |
 |---|---|
-| `node_pattern=PATTERN` | `hostname_rule=type:Node,pattern:PATTERN`    |
-| `bmc_pattern=PATTERN`  | `hostname_rule=type:NodeBMC,pattern:PATTERN` |
+| `node_pattern=PATTERN` | `rule=type:Node,hostname:PATTERN`    |
+| `bmc_pattern=PATTERN`  | `rule=type:NodeBMC,hostname:PATTERN` |
 
 When migrating, place these rules where you want them in the evaluation order.
 It's common to put more specific rules before general ones so that the general
@@ -148,27 +153,27 @@ Use the full component identifier from SMD:
 "matching key-value pairs followed by "action" key-value pairs:
 
 ```
-hostname_rule=<match_keyval(s)>,<action_keyval(s)>
+rule=<match_keyval(s)>,<action_keyval(s)>
 ```
 
 A basic example of this is:
 
 ```
-hostname_rule=type:Node,subnet:172.16.0.0/21,pattern:nid{04d}
+rule=type:Node,subnet:172.16.0.0/21,hostname:nid{04d}
 ```
 
-(`type` and `subnet` are match key-value pairs, `pattern` is action.)
+(`type` and `subnet` are match key-value pairs, `hostname` is an action.)
 
 Values may be quoted with single or double quotes:
 
 ```
-hostname_rule=type:Node,pattern:"rack42-{id}"
+rule=type:Node,hostname:"rack42-{id}"
 ```
 
 Unknown keys are rejected as an error. Duplicate keys in a rule are rejected as
 an error.
 
-If no rule matches, CoreSMD falls back to the built-in default pattern:
+If no rule matches, CoreSMD falls back to the built-in default hostname pattern:
 `unknown-{04d}`
 
 ### Match Keys
@@ -211,16 +216,33 @@ Mutually exclusive with `id`.
 
 ### Action Keys
 
-#### `pattern:PATTERN` (required)
+Rules may apply one or more actions when matched. At least one action must be
+specified. If no match string is specified, the action(s) will apply to all
+incoming DHCP requests.
 
-Hostname pattern to apply. See [Pattern Syntax](#pattern-syntax) above.
+#### `hostname:PATTERN`
+
+Hostname to apply. This value supports the same pattern specifiers as the
+legacy `pattern` key. See [Pattern Syntax](#pattern-syntax) above.
+
+**Default:** omitted (no hostname set by this rule)
+
+#### `routers:IP[|IP...]
+
+Set DHCPv4 Router option (RFC 2132 option 3) for the matched host. Multiple
+routers may be specified using `|`.
+
+This action applies to DHCPv4 only.
+
+**Default:** omitted (no routers set by this rule)
 
 #### `domain:DOMAIN`
 
 Domain to use with hostname if rule matches. Leading dots are ignored. See
 `domain_append` below for modification of how domain behavior is applied.
 
-If `domain:none`, no domain will be appended to the hostname, regardless of global `domain` or `domain_append` rule setting.
+If `domain:none`, no domain will be appended to the hostname, regardless of
+global `domain` or `domain_append` rule setting.
 
 **Default:** omitted (global domain used, if set, otherwise none)
 
@@ -233,7 +255,8 @@ Controls whether the rule-specific `domain` is appended after the global
 `domain` (`false`). This behavior only occurs when the rule-specific `domain`
 is not set to `none`.
 
-If the rule-specific `domain:none`, `domain_append` and the global `domain` have no effect. In other words, the hostname is not appended with any domain.
+If the rule-specific `domain:none`, `domain_append` and the global `domain`
+have no effect. In other words, the hostname is not appended with any domain.
 
 For instance:
 
@@ -269,7 +292,7 @@ Possible values:
 - `debug`: log matches and non-matches for this rule
 - `none`: suppress rule logging for this rule
 
-**Default:** value of `hostname_log`
+**Default:** value of `rule_log`
 
 ## Rule Ordering
 
@@ -294,10 +317,10 @@ generic naming followed by narrow overrides.
 - coresmd: |
     svc_base_uri=https://smd.cluster.local
     ipxe_base_uri=http://192.168.1.1
-    hostname_rule=type:Node,pattern:nid{04d}
+    rule=type:Node,hostname:nid{04d}
 ```
 
-Assign node hostnames from NID. Other types fall back to the default pattern
+Assign node hostnames from NID. Other types fall back to the default hostname
 (`unknown-{04d}`) unless additional rules are added.
 
 | NID | Type | Hostname |
@@ -310,8 +333,8 @@ Assign node hostnames from NID. Other types fall back to the default pattern
 ```yaml
 - coresmd: |
     domain=cluster.local
-    hostname_rule=type:Node,pattern:nid{04d}
-    hostname_rule=type:NodeBMC,pattern:bmc{04d}
+    rule=type:Node,hostname:nid{04d}
+    rule=type:NodeBMC,hostname:bmc{04d}
 ```
 
 Assign hostnames for nodes and BMCs and append a global domain.
@@ -326,9 +349,9 @@ Assign hostnames for nodes and BMCs and append a global domain.
 ```yaml
 - coresmd: |
     domain=lab.local
-    hostname_rule=type:Node,pattern:compute-{05d}
-    hostname_rule=type:NodeBMC,pattern:ipmi-{05d}
-    hostname_rule=type:HSNSwitch,pattern:{id}
+    rule=type:Node,hostname:compute-{05d}
+    rule=type:NodeBMC,hostname:ipmi-{05d}
+    rule=type:HSNSwitch,hostname:{id}
 ```
 
 Use separate naming schemes per component type.
@@ -344,9 +367,9 @@ Use separate naming schemes per component type.
 ```yaml
 - coresmd: |
     domain=lab.local
-    hostname_rule=type:NodeBMC,subnet:172.16.10.0/24,pattern:bmc10-{04d}
-    hostname_rule=type:NodeBMC,subnet:172.16.11.0/24,pattern:bmc11-{04d}
-    hostname_rule=type:NodeBMC,pattern:bmc-{04d}
+    rule=type:NodeBMC,subnet:172.16.10.0/24,hostname:bmc10-{04d}
+    rule=type:NodeBMC,subnet:172.16.11.0/24,hostname:bmc11-{04d}
+    rule=type:NodeBMC,hostname:bmc-{04d}
 ```
 
 Name BMCs differently depending on the assigned subnet, with a final fallback
@@ -358,7 +381,34 @@ rule for BMCs.
 | 172.16.11.50  | NodeBMC | 7 | `bmc11-0007.lab.local` |
 | 172.16.12.10  | NodeBMC | 7 | `bmc-0007.lab.local` |
 
-### 5. Suppress domain suffix for selected hosts
+### 5. Per-subnet routers (DHCPv4 option 3)
+
+Use the `routers:` action to set per-node default gateways. This applies to DHCPv4 only.
+
+```yaml
+- coresmd: |
+    domain=lab.local
+
+    /* Default router for most nodes */
+    rule=type:Node,hostname:nid{04d},routers:172.16.0.1
+
+    /* Management subnet uses a different router */
+    rule=type:Node,subnet:172.16.0.0/24,hostname:nid{04d},routers:172.16.0.254
+
+    /* Multiple routers may be specified (in order) */
+    rule=type:Node,subnet:172.16.1.0/24,hostname:nid{04d},routers:172.16.1.1|172.16.1.2
+```
+
+The hostname is still assigned from the hostname pattern; the `routers` list is written
+to DHCP option 3 for matching DHCPv4 clients.
+
+| IP (assigned) | Type | NID | Hostname | Routers (option 3) |
+|--------------:|------|-----|----------|--------------------|
+| 172.16.0.10 | Node | 7 | `nid0007.lab.local` | `172.16.0.254` |
+| 172.16.1.10 | Node | 7 | `nid0007.lab.local` | `172.16.1.1`, `172.16.1.2` |
+| 172.16.9.10 | Node | 7 | `nid0007.lab.local` | `172.16.0.1` |
+
+### 6. Suppress domain suffix for selected hosts
 
 Use `domain:none` in the rule action. This overrides global `domain` and
 overrides `domain_append:true`.
@@ -366,10 +416,10 @@ overrides `domain_append:true`.
 ```yaml
 - coresmd: |
     domain=.cluster.local
-    hostname_rule=type:Node,pattern:nid{04d}
+    rule=type:Node,hostname:nid{04d}
 
     /* BMCs get *no* domain suffix */
-    hostname_rule=type:NodeBMC,pattern:bmc{04d},domain:none,domain_append:true
+    rule=type:NodeBMC,hostname:bmc{04d},domain:none,domain_append:true
 ```
 
 Use `domain:none` to suppress suffixing, even if `domain_append:true` is set.
@@ -379,7 +429,7 @@ Use `domain:none` to suppress suffixing, even if `domain_append:true` is set.
 | 1 | Node | `nid0001.cluster.local` |
 | 1 | NodeBMC | `bmc0001` |
 
-### 6. Hostname override with `continue`
+### 7. Hostname override with `continue`
 
 `continue:true` allows later rules to refine/override hostnames.
 
@@ -388,10 +438,10 @@ Use `domain:none` to suppress suffixing, even if `domain_append:true` is set.
     domain=cluster.local
 
     /* Base node naming */
-    hostname_rule=name:base,type:Node,pattern:nid{04d},continue:true
+    rule=name:base,type:Node,hostname:nid{04d},continue:true
 
     /* Override domain for a subset of nodes (example) */
-    hostname_rule=name:mgmt,type:Node,subnet:172.16.0.0/24,pattern:nid{04d},domain:mgmt.local
+    rule=name:mgmt,type:Node,subnet:172.16.0.0/24,hostname:nid{04d},domain:mgmt.local
 ```
 
 Two rules match nodes in `172.16.0.0/24`. The first sets the baseline hostname;
@@ -402,26 +452,26 @@ the second overrides the domain for that subnet.
 | 172.16.0.10 | Node | 7 | `nid0007.mgmt.local` |
 | 172.16.9.10 | Node | 7 | `nid0007.cluster.local` |
 
-### 7. Familiar "legacy-style" configuration, expressed as rules
+### 8. Familiar "legacy-style" configuration, expressed as rules
 
 The old `node_pattern`, `bmc_pattern`, `hostname_by_type`, and
-`hostname_default` directives are replaced by `hostname_rule`.
+`hostname_default` directives are replaced by `rule`.
 
 ```yaml
 - coresmd: |
     domain=cluster.local
 
     /* Equivalent to: node_pattern=nid{04d} */
-    hostname_rule=type:Node,pattern:nid{04d}
+    rule=type:Node,hostname:nid{04d}
 
     /* Equivalent to: bmc_pattern=bmc{04d} */
-    hostname_rule=type:NodeBMC,pattern:bmc{04d}
+    rule=type:NodeBMC,hostname:bmc{04d}
 
     /* Equivalent to: hostname_by_type=HSNSwitch:{id} */
-    hostname_rule=type:HSNSwitch,pattern:{id}
+    rule=type:HSNSwitch,hostname:{id}
 
     /* Equivalent to: hostname_default=... (final fallback) */
-    hostname_rule=pattern:unknown-{04d}
+    rule=hostname:unknown-{04d}
 ```
 
 This produces the same administrator-facing naming scheme as the legacy knobs,
@@ -429,7 +479,7 @@ while preserving rule ordering and allowing additional matching criteria.
 
 ## Caveats
 
-- `pattern` is required.
+- At least one action must be specified: `hostname` and/or `routers`.
 - `type:` is optional, but if present must include at least one type.
 - Only the first assigned IP is used for subnet matching.
 - `domain:none` suppresses all domain suffixing (even if `domain_append:true`).
@@ -441,7 +491,7 @@ final "catch-all" rule that matches your desired behavior, e.g.:
 ```yaml
 - coresmd: |
     ...
-    hostname_rule=pattern:{id}
+    rule=hostname:{id}
 ```
 
 ## See Also

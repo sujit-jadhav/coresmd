@@ -18,7 +18,6 @@ import (
 	"github.com/coredhcp/coredhcp/plugins"
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/dhcpv6"
-	"github.com/insomniacslk/dhcp/rfc1035label"
 	"github.com/sirupsen/logrus"
 
 	"github.com/openchami/coresmd/internal/cache"
@@ -33,21 +32,21 @@ import (
 
 type Config struct {
 	// Parsed from configuration file
-	svcBaseURI    *url.URL       // svc_base_uri
-	ipxeBaseURI   *url.URL       // ipxe_base_uri
-	caCert        string         // ca_cert
-	cacheValid    *time.Duration // cache_valid
-	leaseTime     *time.Duration // lease_time
-	singlePort    bool           // single_port
-	tftpDir       string         // tftp_dir
-	tftpPort      int            // tftp_port
-	domain        string         // domain
-	hostnameLog   string         // hostname_log
-	hostnameRules []rule.Rule    // hostname_rule
+	svcBaseURI  *url.URL       // svc_base_uri
+	ipxeBaseURI *url.URL       // ipxe_base_uri
+	caCert      string         // ca_cert
+	cacheValid  *time.Duration // cache_valid
+	leaseTime   *time.Duration // lease_time
+	singlePort  bool           // single_port
+	tftpDir     string         // tftp_dir
+	tftpPort    int            // tftp_port
+	domain      string         // domain
+	ruleLog     string         // rule_log
+	rules       []rule.Rule    // rule
 }
 
 func (c Config) String() string {
-	cfgStr := fmt.Sprintf("svc_base_uri=%s ipxe_base_uri=%s ca_cert=%s cache_valid=%s lease_time=%s single_port=%v tftp_dir=%s tftp_port=%d domain=%s",
+	cfgStr := fmt.Sprintf("svc_base_uri=%s ipxe_base_uri=%s ca_cert=%s cache_valid=%s lease_time=%s single_port=%v tftp_dir=%s tftp_port=%d domain=%s rule_log=%s",
 		c.svcBaseURI,
 		c.ipxeBaseURI,
 		c.caCert,
@@ -57,11 +56,10 @@ func (c Config) String() string {
 		c.tftpDir,
 		c.tftpPort,
 		c.domain,
+		c.ruleLog,
 	)
-	if len(c.hostnameRules) > 0 {
-		for _, rule := range c.hostnameRules {
-			cfgStr += fmt.Sprintf(" hostname_rule=%s", rule)
-		}
+	for _, rule := range c.rules {
+		cfgStr += fmt.Sprintf(" rule=%s", rule)
 	}
 
 	return cfgStr
@@ -301,23 +299,23 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 		case "bmc_pattern":
 			bmcPattern := strings.Trim(opt[1], `'"`)
 			if bmcPattern != "" {
-				bmcRuleStr := fmt.Sprintf("type:NodeBMC,pattern:%s", bmcPattern)
+				bmcRuleStr := fmt.Sprintf("type:NodeBMC,hostname:%s", bmcPattern)
 				if bmcRule, err := rule.ParseRule(bmcRuleStr); err != nil {
 					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
 					continue
 				} else {
-					cfg.hostnameRules = append(cfg.hostnameRules, bmcRule)
+					cfg.rules = append(cfg.rules, bmcRule)
 				}
 			}
 		case "node_pattern":
 			nodePattern := strings.Trim(opt[1], `"'`)
 			if nodePattern != "" {
-				nodeRuleStr := fmt.Sprintf("type:Node,pattern:%s", nodePattern)
+				nodeRuleStr := fmt.Sprintf("type:Node,hostname:%s", nodePattern)
 				if nodeRule, err := rule.ParseRule(nodeRuleStr); err != nil {
 					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
 					continue
 				} else {
-					cfg.hostnameRules = append(cfg.hostnameRules, nodeRule)
+					cfg.rules = append(cfg.rules, nodeRule)
 				}
 			}
 		case "domain":
@@ -325,24 +323,24 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 			if domain != "" {
 				cfg.domain = domain
 			}
-		case "hostname_log":
-			if cfg.hostnameLog != "" {
+		case "rule_log":
+			if cfg.ruleLog != "" {
 				errs = append(errs, fmt.Errorf("non-comment arg %d: duplicate key '%s', using last value", idx, opt[0]))
 			}
 			switch opt[1] {
 			case "info", "debug", "none":
-				cfg.hostnameLog = opt[1]
+				cfg.ruleLog = opt[1]
 			default:
 				errs = append(errs, fmt.Errorf("non-comment arg %d: invalid format for key '%s': expected 'info', 'debug', or 'none', got %s", idx, opt[0], opt[1]))
 				continue
 			}
-		case "hostname_rule":
+		case "rule":
 			rule, err := rule.ParseRule(opt[1])
 			if err != nil {
-				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid rule: %q: %w", idx, opt[0], opt[1], err))
 				continue
 			}
-			cfg.hostnameRules = append(cfg.hostnameRules, rule)
+			cfg.rules = append(cfg.rules, rule)
 		default:
 			errs = append(errs, fmt.Errorf("non-comment arg %d: unknown config key '%s' (skipping)", idx, opt[0]))
 			continue
@@ -428,9 +426,8 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 		resp.Options.Update(dhcpv4.OptIPAddressLeaseTime(*globalConfig.leaseTime))
 	}
 
-	// Apply hostname rules
-	hname := rule.LookupHostname(log, ifaceInfo, globalConfig.domain, globalConfig.hostnameLog, globalConfig.hostnameRules)
-	resp.Options.Update(dhcpv4.OptHostName(hname))
+	// Apply rules
+	rule.Evaluate4(log, ifaceInfo, globalConfig.domain, globalConfig.ruleLog, resp, globalConfig.rules)
 
 	// Set root path to this server's IP
 	resp.Options.Update(dhcpv4.OptRootPath(resp.ServerIPAddr.String()))
@@ -443,9 +440,10 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 		"comp_ips":          ifaceInfo.IPList,
 		"comp_mac":          ifaceInfo.MAC,
 		"assigned_ipv4":     assignedIP,
-		"assigned_hostname": hname,
+		"assigned_hostname": string(resp.Options.Get(dhcpv4.OptionHostName)),
 		"lease_duration":    globalConfig.leaseTime,
 		"server_ip":         resp.ServerIPAddr,
+		"router_ip":         string(resp.Options.Get(dhcpv4.OptionRouter)),
 	}).Info("DHCPv4 assignment")
 
 	// STEP 2: Send boot config
@@ -508,10 +506,8 @@ func Handler6(req, resp dhcpv6.DHCPv6) (dhcpv6.DHCPv6, bool) {
 		return resp, false
 	}
 
-	// Apply hostname rules
-	hname := rule.LookupHostname(log, ifaceInfo, globalConfig.domain, globalConfig.hostnameLog, globalConfig.hostnameRules)
-	labels := &rfc1035label.Labels{Labels: strings.Split(hname, ".")}
-	msg.UpdateOption(&dhcpv6.OptFQDN{Flags: 0, DomainName: labels})
+	// Apply rules
+	rule.Evaluate6(log, ifaceInfo, globalConfig.domain, globalConfig.ruleLog, msg, globalConfig.rules)
 
 	// Add IANA (Identity Association for Non-temporary Addresses) with the IPv6 address
 	reqMsg, ok := req.(*dhcpv6.Message)
@@ -545,7 +541,7 @@ func Handler6(req, resp dhcpv6.DHCPv6) (dhcpv6.DHCPv6, bool) {
 		"comp_ips":          ifaceInfo.IPList,
 		"comp_mac":          ifaceInfo.MAC,
 		"assigned_ipv6":     assignedIPv6,
-		"assigned_hostname": hname,
+		"assigned_hostname": resp.GetOption(dhcpv6.OptionFQDN),
 		"lease_duration":    globalConfig.leaseTime,
 	}).Info("DHCPv6 assignment")
 

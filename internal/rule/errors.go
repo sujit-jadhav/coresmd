@@ -105,18 +105,18 @@ func (edk ErrDuplicateKey) Error() string {
 	return fmt.Sprintf("element %d: duplicate key %q: got %q", edk.Elem, edk.Key, edk.Got)
 }
 
-type ErrRequiredKey struct {
-	Key string
+type ErrRequiredKeys struct {
+	Keys []string
 }
 
-func NewErrRequiredKey(key string) ErrRequiredKey {
-	return ErrRequiredKey{
-		Key: key,
+func NewErrRequiredKeys(keys ...string) ErrRequiredKeys {
+	return ErrRequiredKeys{
+		Keys: keys,
 	}
 }
 
-func (erk ErrRequiredKey) Error() string {
-	return fmt.Sprintf("required key missing: %q", erk.Key)
+func (erk ErrRequiredKeys) Error() string {
+	return fmt.Sprintf("required key missing, at least one of %v", erk.Keys)
 }
 
 type ErrInvalidValue struct {

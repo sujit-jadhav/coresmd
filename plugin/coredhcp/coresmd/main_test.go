@@ -31,7 +31,7 @@ func TestConfigString_IncludesKeyFields(t *testing.T) {
 		tftpDir:     "/tftp",
 		tftpPort:    1069,
 		domain:      "example.test",
-		hostnameLog: "debug",
+		ruleLog:     "debug",
 	}
 
 	s := cfg.String()
@@ -45,6 +45,7 @@ func TestConfigString_IncludesKeyFields(t *testing.T) {
 		"tftp_dir=/tftp",
 		"tftp_port=1069",
 		"domain=example.test",
+		"rule_log=debug",
 	}
 	for _, sub := range wantSubstrings {
 		if !strings.Contains(s, sub) {
@@ -53,7 +54,7 @@ func TestConfigString_IncludesKeyFields(t *testing.T) {
 	}
 }
 
-func TestParseConfig_HostnameRule(t *testing.T) {
+func TestParseConfig_Rules(t *testing.T) {
 	cacheDur := 15 * time.Second
 	leaseDur := 30 * time.Minute
 
@@ -67,22 +68,22 @@ func TestParseConfig_HostnameRule(t *testing.T) {
 		"tftp_dir=/tftp",
 		"tftp_port=1069",
 		"domain=cluster.local",
-		"hostname_log=info",
-		"hostname_rule=name:special,type:Node,id:x1000s0c0b0n0,pattern:login-{id},domain:mgmt.local",
+		"rule_log=info",
+		"rule=name:special,type:Node,id:x1000s0c0b0n0,hostname:login-{id},domain:mgmt.local",
 	}
 
 	cfg, errs := parseConfig(args...)
 	if len(errs) != 0 {
 		t.Fatalf("parseConfig() unexpected errors: %v", errs)
 	}
-	if cfg.hostnameLog != "info" {
-		t.Fatalf("hostnameLog=%q", cfg.hostnameLog)
+	if cfg.ruleLog != "info" {
+		t.Fatalf("ruleLog=%q", cfg.ruleLog)
 	}
-	if len(cfg.hostnameRules) != 1 {
-		t.Fatalf("hostnameRules len=%d, want 1", len(cfg.hostnameRules))
+	if len(cfg.rules) != 1 {
+		t.Fatalf("rules len=%d, want 1", len(cfg.rules))
 	}
 	found := false
-	for _, r := range cfg.hostnameRules {
+	for _, r := range cfg.rules {
 		if r.Name == "special" {
 			found = true
 			if r.Match.ID != "x1000s0c0b0n0" {
@@ -91,8 +92,8 @@ func TestParseConfig_HostnameRule(t *testing.T) {
 			if r.Match.Types == nil || !r.Match.Types["Node"] {
 				t.Fatalf("special rule type match missing")
 			}
-			if r.Action.Pattern != "login-{id}" {
-				t.Fatalf("special rule pattern=%q", r.Action.Pattern)
+			if r.Action.Hostname != "login-{id}" {
+				t.Fatalf("special rule hostname=%q", r.Action.Hostname)
 			}
 			if r.Action.Domain != "mgmt.local" {
 				t.Fatalf("special rule domain=%q", r.Action.Domain)
@@ -100,7 +101,7 @@ func TestParseConfig_HostnameRule(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("did not find explicit hostname_rule named 'special'")
+		t.Fatalf("did not find explicit rule named 'special'")
 	}
 }
 

@@ -5,9 +5,13 @@
 package rule
 
 import (
+	"bytes"
 	"net"
+	"strings"
 	"testing"
 
+	"github.com/insomniacslk/dhcp/dhcpv4"
+	"github.com/insomniacslk/dhcp/dhcpv6"
 	"github.com/openchami/coresmd/internal/iface"
 )
 
@@ -35,12 +39,12 @@ func TestCreateRuleCompDict_Table(t *testing.T) {
 		wantErr bool
 	}{
 		{"empty", " ", true},
-		{"missing_colon", "pattern:a,bad", true},
-		{"empty_key", ":x,pattern:a", true},
-		{"unknown_key", "pattern:a,domian:oopsy", true},
-		{"duplicate_key", "pattern:a,pattern:b", true},
-		{"bad_quote", "pattern:'a\\'", true},
-		{"ok", "name:r1,pattern:'a,b',type:Node,continue:yes", false},
+		{"missing_colon", "hostname:a,bad", true},
+		{"empty_key", ":x,hostname:a", true},
+		{"unknown_key", "hostname:a,domian:oopsy", true},
+		{"duplicate_key", "hostname:a,hostname:b", true},
+		{"bad_quote", "hostname:'a\\'", true},
+		{"ok", "name:r1,hostname:'a,b',type:Node,continue:yes,routers:192.0.2.1|192.0.2.2", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -51,8 +55,8 @@ func TestCreateRuleCompDict_Table(t *testing.T) {
 			if tt.wantErr {
 				return
 			}
-			if got["pattern"] != "a,b" {
-				t.Fatalf("expected pattern=%q got=%q", "a,b", got["pattern"])
+			if got["hostname"] != "a,b" {
+				t.Fatalf("expected hostname=%q got=%q", "a,b", got["hostname"])
 			}
 		})
 	}
@@ -64,18 +68,20 @@ func TestParseRule_Table(t *testing.T) {
 		in      string
 		wantErr bool
 	}{
-		{"missing_pattern", "name:r1,type:Node", true},
-		{"type_empty", "pattern:x,type:", true},
-		{"type_whitespace", "pattern:x,type:   ", true},
-		{"type_separators_only", "pattern:x,type:| |", true},
-		{"log_invalid", "log:verbose,pattern:x", true},
-		{"continue_invalid", "pattern:x,continue:maybe", true},
-		{"domain_append_invalid", "pattern:x,domain_append:maybe", true},
-		{"subnet_invalid", "pattern:x,subnet:notacidr", true},
-		{"id_and_idset_mutual_exclusion", "pattern:x,id:a,id_set:b", true},
-		{"ok_minimal", "pattern:nid{04d}", false},
-		{"ok_multi", "name:r1,log:debug,pattern:x,continue:yes,domain_append:on,type:Node| NodeBMC ,subnet:172.16.0.0/24|172.16.1.0/24", false},
-		{"id_set_unimplemented", "pattern:x,id_set:x1000s[0-3]c0b0n[0-7]", true},
+		{"missing_actions", "name:r1,type:Node", true},
+		{"routers_only_ok", "routers:192.0.2.1", false},
+		{"routers_bad_ip", "routers:not_an_ip", true},
+		{"type_empty", "hostname:x,type:", true},
+		{"type_whitespace", "hostname:x,type:   ", true},
+		{"type_separators_only", "hostname:x,type:| |", true},
+		{"log_invalid", "log:verbose,hostname:x", true},
+		{"continue_invalid", "hostname:x,continue:maybe", true},
+		{"domain_append_invalid", "hostname:x,domain_append:maybe", true},
+		{"subnet_invalid", "hostname:x,subnet:notacidr", true},
+		{"id_and_idset_mutual_exclusion", "hostname:x,id:a,id_set:b", true},
+		{"ok_minimal", "hostname:nid{04d}", false},
+		{"ok_multi", "name:r1,log:debug,hostname:x,continue:yes,domain_append:on,type:Node| NodeBMC ,subnet:172.16.0.0/24|172.16.1.0/24", false},
+		{"id_set_unimplemented", "hostname:x,id_set:x1000s[0-3]c0b0n[0-7]", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -86,8 +92,13 @@ func TestParseRule_Table(t *testing.T) {
 			if tt.wantErr {
 				return
 			}
-			if r.Action.Pattern == "" {
-				t.Fatalf("expected non-empty pattern got=%q", r.Action.Pattern)
+			if tt.name != "routers_only_ok" && r.Action.Hostname == "" {
+				t.Fatalf("expected non-empty hostname got=%q", r.Action.Hostname)
+			}
+			if tt.name == "routers_only_ok" {
+				if len(r.Action.Routers) != 1 {
+					t.Fatalf("expected 1 router got=%d", len(r.Action.Routers))
+				}
 			}
 			// Ensure type trimming works for the ok_multi case.
 			if tt.name == "ok_multi" {
@@ -112,15 +123,15 @@ func TestRuleMatchIface_Combinations(t *testing.T) {
 		ii        iface.IfaceInfo
 		wantMatch bool
 	}{
-		{"match_all_when_no_match_fields", Rule{Action: Action{Pattern: "x"}}, iiNode, true},
-		{"empty_type_map_is_wildcard_matches_empty_type", Rule{Match: Match{Types: map[string]bool{}}, Action: Action{Pattern: "x"}}, iiEmptyType, true},
-		{"type_match", Rule{Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Pattern: "x"}}, iiNode, true},
-		{"type_mismatch", Rule{Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Pattern: "x"}}, iiBMC, false},
-		{"subnet_match", Rule{Match: Match{Subnets: []*net.IPNet{mustCIDR(t, "172.16.0.0/24")}}, Action: Action{Pattern: "x"}}, iiNode, true},
-		{"id_match_trim", Rule{Match: Match{ID: "  x1000s0c0b0n0  "}, Action: Action{Pattern: "x"}}, iiNode, true},
-		{"idset_match", Rule{Match: Match{IDSet: mset}, Action: Action{Pattern: "x"}}, iiNode, true},
-		{"compound_all_required", Rule{Match: Match{Types: map[string]bool{"Node": true}, Subnets: []*net.IPNet{mustCIDR(t, "172.16.0.0/24")}, IDSet: mset}, Action: Action{Pattern: "x"}}, iiNode, true},
-		{"compound_missing_one", Rule{Match: Match{Types: map[string]bool{"Node": true}, Subnets: []*net.IPNet{mustCIDR(t, "172.16.99.0/24")}, IDSet: mset}, Action: Action{Pattern: "x"}}, iiNode, false},
+		{"match_all_when_no_match_fields", Rule{Action: Action{Hostname: "x"}}, iiNode, true},
+		{"empty_type_map_is_wildcard_matches_empty_type", Rule{Match: Match{Types: map[string]bool{}}, Action: Action{Hostname: "x"}}, iiEmptyType, true},
+		{"type_match", Rule{Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Hostname: "x"}}, iiNode, true},
+		{"type_mismatch", Rule{Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Hostname: "x"}}, iiBMC, false},
+		{"subnet_match", Rule{Match: Match{Subnets: []*net.IPNet{mustCIDR(t, "172.16.0.0/24")}}, Action: Action{Hostname: "x"}}, iiNode, true},
+		{"id_match_trim", Rule{Match: Match{ID: "  x1000s0c0b0n0  "}, Action: Action{Hostname: "x"}}, iiNode, true},
+		{"idset_match", Rule{Match: Match{IDSet: mset}, Action: Action{Hostname: "x"}}, iiNode, true},
+		{"compound_all_required", Rule{Match: Match{Types: map[string]bool{"Node": true}, Subnets: []*net.IPNet{mustCIDR(t, "172.16.0.0/24")}, IDSet: mset}, Action: Action{Hostname: "x"}}, iiNode, true},
+		{"compound_missing_one", Rule{Match: Match{Types: map[string]bool{"Node": true}, Subnets: []*net.IPNet{mustCIDR(t, "172.16.99.0/24")}, IDSet: mset}, Action: Action{Hostname: "x"}}, iiNode, false},
 	}
 
 	for _, tt := range tests {
@@ -133,57 +144,101 @@ func TestRuleMatchIface_Combinations(t *testing.T) {
 	}
 }
 
-func TestLookupHostname_RuleOrderingContinueAndDomains(t *testing.T) {
+
+func TestEvaluate4_HostnameRoutersAndDefault(t *testing.T) {
 	ii := iface.IfaceInfo{CompID: "x1000s0c0b0n0", CompNID: 7, Type: "Node", MAC: "aa", IPList: []net.IP{net.ParseIP("172.16.0.10")}}
 
-	rules := []Rule{
-		{Name: "id", Match: Match{ID: "x1000s0c0b0n0"}, Action: Action{Pattern: "special-{id}", Continue: true}},
-		{Name: "type", Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Pattern: "nid{04d}", Domain: "override.local", DomainAppend: false}},
-		{Name: "catchall", Action: Action{Pattern: "should-not-win"}},
+	// Matching rules set hostname and routers; default should NOT override.
+	resp, err := dhcpv4.New()
+	if err != nil {
+		t.Fatalf("unexpected error creating dhcpv4 message: %v", err)
 	}
-	got := LookupHostname(nil, ii, "cluster.local", "none", rules)
-	if got != "nid0007.override.local" {
+	rules := []Rule{{
+		Name:  "node",
+		Match: Match{Types: map[string]bool{"Node": true}},
+		Action: Action{Hostname: "nid{04d}", Domain: "override.local", Routers: []net.IP{net.ParseIP("192.0.2.1"), net.ParseIP("192.0.2.2")}},
+	}}
+	Evaluate4(nil, ii, "cluster.local", "none", resp, rules)
+
+	if got := string(bytes.Trim(resp.Options.Get(dhcpv4.OptionHostName), "\x00")); got != "nid0007.override.local" {
 		t.Fatalf("expected=%q got=%q", "nid0007.override.local", got)
 	}
-
-	rules2 := []Rule{{Name: "type", Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Pattern: "nid{04d}", Domain: "rack.local", DomainAppend: true}}}
-	got2 := LookupHostname(nil, ii, ".cluster.local", "none", rules2)
-	if got2 != "nid0007.cluster.local.rack.local" {
-		t.Fatalf("expected=%q got=%q", "nid0007.cluster.local.rack.local", got2)
+	if got := resp.Options.Get(dhcpv4.OptionRouter); len(got) != 8 {
+		t.Fatalf("expected %d bytes of router option got=%d", 8, len(got))
 	}
 
-	// domain=none must override domain_append=true and suppress global domain
-	rules2b := []Rule{{Name: "none", Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Pattern: "nid{04d}", Domain: "none", DomainAppend: true}}}
-	got2b := LookupHostname(nil, ii, "cluster.local", "none", rules2b)
-	if got2b != "nid0007" {
-		t.Fatalf("expected=%q got=%q", "nid0007", got2b)
+	// Routers-only rule is allowed; hostname falls back to DefaultPattern.
+	resp2, err := dhcpv4.New()
+	if err != nil {
+		t.Fatalf("unexpected error creating dhcpv4 message: %v", err)
+	}
+	rules2 := []Rule{{Name: "rtrs", Action: Action{Routers: []net.IP{net.ParseIP("192.0.2.1")}}}}
+	Evaluate4(nil, ii, "cluster.local", "none", resp2, rules2)
+	if got := string(bytes.Trim(resp2.Options.Get(dhcpv4.OptionHostName), "\x00")); got != "unknown-0007.cluster.local" {
+		t.Fatalf("expected=%q got=%q", "unknown-0007.cluster.local", got)
 	}
 
-	// domain=none must also override domain_append=true when the *global* domain has a leading dot.
-	rules2b2 := []Rule{{Name: "none-dot-global", Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Pattern: "nid{04d}", Domain: "none", DomainAppend: true}}}
-	got2b2 := LookupHostname(nil, ii, ".cluster.local", "none", rules2b2)
-	if got2b2 != "nid0007" {
-		t.Fatalf("expected=%q got=%q", "nid0007", got2b2)
+	// No rules match => default hostname applied.
+	resp3, err := dhcpv4.New()
+	if err != nil {
+		t.Fatalf("unexpected error creating dhcpv4 message: %v", err)
 	}
-
-	// leading dot in rule domain should be trimmed
-	rules2c := []Rule{{Name: "dot", Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Pattern: "nid{04d}", Domain: ".override.local", DomainAppend: false}}}
-	got2c := LookupHostname(nil, ii, "cluster.local", "none", rules2c)
-	if got2c != "nid0007.override.local" {
-		t.Fatalf("expected=%q got=%q", "nid0007.override.local", got2c)
-	}
-
-	rules3 := []Rule{{Name: "nope", Match: Match{Types: map[string]bool{"NodeBMC": true}}, Action: Action{Pattern: "bmc{04d}"}}}
-	got3 := LookupHostname(nil, ii, "cluster.local", "none", rules3)
-	if got3 != "unknown-0007.cluster.local" {
-		t.Fatalf("expected=%q got=%q", "unknown-0007.cluster.local", got3)
+	rules3 := []Rule{{Name: "nope", Match: Match{Types: map[string]bool{"NodeBMC": true}}, Action: Action{Hostname: "bmc{04d}"}}}
+	Evaluate4(nil, ii, "cluster.local", "none", resp3, rules3)
+	if got := string(bytes.Trim(resp3.Options.Get(dhcpv4.OptionHostName), "\x00")); got != "unknown-0007.cluster.local" {
+		t.Fatalf("expected=%q got=%q", "unknown-0007.cluster.local", got)
 	}
 
 	// Subnet match only checks the first IP in the list.
 	ii2 := iface.IfaceInfo{CompID: "x1000s0c0b0n0", CompNID: 7, Type: "Node", MAC: "aa", IPList: []net.IP{net.ParseIP("172.16.99.10"), net.ParseIP("172.16.0.10")}}
-	rules4 := []Rule{{Name: "subnet", Match: Match{Subnets: []*net.IPNet{mustCIDR(t, "172.16.0.0/24")}}, Action: Action{Pattern: "nid{04d}"}}}
-	got4 := LookupHostname(nil, ii2, "cluster.local", "none", rules4)
-	if got4 != "unknown-0007.cluster.local" {
-		t.Fatalf("expected=%q got=%q", "unknown-0007.cluster.local", got4)
+	resp4, err := dhcpv4.New()
+	if err != nil {
+		t.Fatalf("unexpected error creating dhcpv4 message: %v", err)
+	}
+	rules4 := []Rule{{Name: "subnet", Match: Match{Subnets: []*net.IPNet{mustCIDR(t, "172.16.0.0/24")}}, Action: Action{Hostname: "nid{04d}"}}}
+	Evaluate4(nil, ii2, "cluster.local", "none", resp4, rules4)
+	if got := string(bytes.Trim(resp4.Options.Get(dhcpv4.OptionHostName), "\x00")); got != "unknown-0007.cluster.local" {
+		t.Fatalf("expected=%q got=%q", "unknown-0007.cluster.local", got)
+	}
+}
+
+func TestEvaluate6_HostnameAndDefault(t *testing.T) {
+	ii := iface.IfaceInfo{CompID: "x1000s0c0b0n0", CompNID: 7, Type: "Node", MAC: "aa", IPList: []net.IP{net.ParseIP("172.16.0.10")}}
+
+	resp, err := dhcpv6.NewMessage()
+	if err != nil {
+		t.Fatalf("unexpected error creating dhcpv6 message: %v", err)
+	}
+	rules := []Rule{{Name: "node", Match: Match{Types: map[string]bool{"Node": true}}, Action: Action{Hostname: "nid{04d}", Domain: "override.local"}}}
+	Evaluate6(nil, ii, "cluster.local", "none", resp, rules)
+
+	opt := resp.GetOneOption(dhcpv6.OptionFQDN)
+	if opt == nil {
+		t.Fatalf("expected FQDN option to be set got=nil")
+	}
+	fqdn, ok := opt.(*dhcpv6.OptFQDN)
+	if !ok {
+		t.Fatalf("expected OptFQDN got=%T", opt)
+	}
+	got := strings.Join(fqdn.DomainName.Labels, ".")
+	if got != "nid0007.override.local" {
+		t.Fatalf("expected=%q got=%q", "nid0007.override.local", got)
+	}
+
+	// No match => default hostname applied.
+	resp2, err := dhcpv6.NewMessage()
+	if err != nil {
+		t.Fatalf("unexpected error creating dhcpv6 message: %v", err)
+	}
+	rules2 := []Rule{{Name: "nope", Match: Match{Types: map[string]bool{"NodeBMC": true}}, Action: Action{Hostname: "bmc{04d}"}}}
+	Evaluate6(nil, ii, "cluster.local", "none", resp2, rules2)
+	opt2 := resp2.GetOneOption(dhcpv6.OptionFQDN)
+	if opt2 == nil {
+		t.Fatalf("expected FQDN option to be set got=nil")
+	}
+	fqdn2 := opt2.(*dhcpv6.OptFQDN)
+	got2 := strings.Join(fqdn2.DomainName.Labels, ".")
+	if got2 != "unknown-0007.cluster.local" {
+		t.Fatalf("expected=%q got=%q", "unknown-0007.cluster.local", got2)
 	}
 }
