@@ -23,9 +23,9 @@ import (
 
 	"github.com/openchami/coresmd/internal/cache"
 	"github.com/openchami/coresmd/internal/debug"
-	"github.com/openchami/coresmd/internal/hostname"
 	"github.com/openchami/coresmd/internal/iface"
 	"github.com/openchami/coresmd/internal/ipxe"
+	"github.com/openchami/coresmd/internal/rule"
 	"github.com/openchami/coresmd/internal/smdclient"
 	"github.com/openchami/coresmd/internal/tftp"
 	"github.com/openchami/coresmd/internal/version"
@@ -33,17 +33,17 @@ import (
 
 type Config struct {
 	// Parsed from configuration file
-	svcBaseURI    *url.URL        // svc_base_uri
-	ipxeBaseURI   *url.URL        // ipxe_base_uri
-	caCert        string          // ca_cert
-	cacheValid    *time.Duration  // cache_valid
-	leaseTime     *time.Duration  // lease_time
-	singlePort    bool            // single_port
-	tftpDir       string          // tftp_dir
-	tftpPort      int             // tftp_port
-	domain        string          // domain
-	hostnameLog   string          // hostname_log
-	hostnameRules []hostname.Rule // hostname_rule
+	svcBaseURI    *url.URL       // svc_base_uri
+	ipxeBaseURI   *url.URL       // ipxe_base_uri
+	caCert        string         // ca_cert
+	cacheValid    *time.Duration // cache_valid
+	leaseTime     *time.Duration // lease_time
+	singlePort    bool           // single_port
+	tftpDir       string         // tftp_dir
+	tftpPort      int            // tftp_port
+	domain        string         // domain
+	hostnameLog   string         // hostname_log
+	hostnameRules []rule.Rule    // hostname_rule
 }
 
 func (c Config) String() string {
@@ -302,7 +302,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 			bmcPattern := strings.Trim(opt[1], `'"`)
 			if bmcPattern != "" {
 				bmcRuleStr := fmt.Sprintf("type=NodeBMC,pattern=%s", bmcPattern)
-				if bmcRule, err := hostname.ParseRule(bmcRuleStr); err != nil {
+				if bmcRule, err := rule.ParseRule(bmcRuleStr); err != nil {
 					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
 					continue
 				} else {
@@ -313,7 +313,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 			nodePattern := strings.Trim(opt[1], `"'`)
 			if nodePattern != "" {
 				nodeRuleStr := fmt.Sprintf("type=Node,pattern=%s", nodePattern)
-				if nodeRule, err := hostname.ParseRule(nodeRuleStr); err != nil {
+				if nodeRule, err := rule.ParseRule(nodeRuleStr); err != nil {
 					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
 					continue
 				} else {
@@ -337,7 +337,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 				continue
 			}
 		case "hostname_rule":
-			rule, err := hostname.ParseRule(opt[1])
+			rule, err := rule.ParseRule(opt[1])
 			if err != nil {
 				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
 				continue
@@ -429,7 +429,7 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 	}
 
 	// Apply hostname rules
-	hname := hostname.LookupHostname(log, ifaceInfo, globalConfig.domain, globalConfig.hostnameLog, globalConfig.hostnameRules)
+	hname := rule.LookupHostname(log, ifaceInfo, globalConfig.domain, globalConfig.hostnameLog, globalConfig.hostnameRules)
 	resp.Options.Update(dhcpv4.OptHostName(hname))
 
 	// Set root path to this server's IP
@@ -509,7 +509,7 @@ func Handler6(req, resp dhcpv6.DHCPv6) (dhcpv6.DHCPv6, bool) {
 	}
 
 	// Apply hostname rules
-	hname := hostname.LookupHostname(log, ifaceInfo, globalConfig.domain, globalConfig.hostnameLog, globalConfig.hostnameRules)
+	hname := rule.LookupHostname(log, ifaceInfo, globalConfig.domain, globalConfig.hostnameLog, globalConfig.hostnameRules)
 	labels := &rfc1035label.Labels{Labels: strings.Split(hname, ".")}
 	msg.UpdateOption(&dhcpv6.OptFQDN{Flags: 0, DomainName: labels})
 

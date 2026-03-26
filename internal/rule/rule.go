@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-package hostname
+package rule
 
 import (
 	"crypto/sha256"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/openchami/coresmd/internal/hostname"
 	"github.com/openchami/coresmd/internal/iface"
 	"github.com/openchami/coresmd/internal/parse"
 )
@@ -443,9 +444,9 @@ func LookupHostname(logger *logrus.Entry, ii iface.IfaceInfo, domain, hlog strin
 	return
 }
 
-func setHostname(pattern, domain string, ii iface.IfaceInfo, rule Rule) (hostname string) {
+func setHostname(pattern, domain string, ii iface.IfaceInfo, rule Rule) (hname string) {
 	// Compile hostname from pattern
-	hostname = ExpandHostnamePattern(pattern, ii.CompNID, ii.CompID)
+	hname = hostname.ExpandHostnamePattern(pattern, ii.CompNID, ii.CompID)
 
 	// Trim global domain, if set
 	if dom := strings.TrimSpace(domain); dom != "" {
@@ -458,28 +459,28 @@ func setHostname(pattern, domain string, ii iface.IfaceInfo, rule Rule) (hostnam
 	if rdom := strings.TrimSpace(rule.Action.Domain); rdom != "" {
 		// domain=none always suppresses any domain behavior (including domain_append).
 		if rdom == "none" {
-			return hostname
+			return hname
 		}
 		rdom = strings.TrimLeft(rdom, ".")
 		if rule.Action.DomainAppend {
-			// Rule domain specified to append, append rule domain to hostname
+			// Rule domain specified to append, append rule domain to hname
 			// appended with global domain (if set).
 			if domain != "" {
-				hostname = fmt.Sprintf("%s.%s.%s", hostname, strings.TrimLeft(domain, "."), strings.TrimLeft(rdom, "."))
+				hname = fmt.Sprintf("%s.%s.%s", hname, strings.TrimLeft(domain, "."), strings.TrimLeft(rdom, "."))
 			} else {
 				// Append specified, but global domain was not set. Use only
 				// rule domain.
-				hostname = fmt.Sprintf("%s.%s", hostname, strings.TrimLeft(rdom, "."))
+				hname = fmt.Sprintf("%s.%s", hname, strings.TrimLeft(rdom, "."))
 			}
 		} else {
 			// Rule domain specified to replace global domain, do so.
-			hostname = fmt.Sprintf("%s.%s", hostname, strings.TrimLeft(rdom, "."))
+			hname = fmt.Sprintf("%s.%s", hname, strings.TrimLeft(rdom, "."))
 		}
 	} else {
 		// Rule domain was not specified, DomainAppend setting doesn't matter.
 		// Append the global domain only if set.
 		if domain != "" {
-			hostname = fmt.Sprintf("%s.%s", hostname, strings.TrimLeft(domain, "."))
+			hname = fmt.Sprintf("%s.%s", hname, strings.TrimLeft(domain, "."))
 		}
 	}
 
