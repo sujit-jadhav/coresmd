@@ -35,12 +35,12 @@ func TestCreateRuleCompDict_Table(t *testing.T) {
 		wantErr bool
 	}{
 		{"empty", " ", true},
-		{"missing_equals", "pattern=a,bad", true},
-		{"empty_key", "=x,pattern=a", true},
-		{"unknown_key", "pattern=a,domian=oopsy", true},
-		{"duplicate_key", "pattern=a,pattern=b", true},
-		{"bad_quote", "pattern='a\\'", true},
-		{"ok", "name=r1,pattern='a,b',type=Node,continue=yes", false},
+		{"missing_colon", "pattern:a,bad", true},
+		{"empty_key", ":x,pattern:a", true},
+		{"unknown_key", "pattern:a,domian:oopsy", true},
+		{"duplicate_key", "pattern:a,pattern:b", true},
+		{"bad_quote", "pattern:'a\\'", true},
+		{"ok", "name:r1,pattern:'a,b',type:Node,continue:yes", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,18 +64,18 @@ func TestParseRule_Table(t *testing.T) {
 		in      string
 		wantErr bool
 	}{
-		{"missing_pattern", "name=r1,type=Node", true},
-		{"type_empty", "pattern=x,type=", true},
-		{"type_whitespace", "pattern=x,type=   ", true},
-		{"type_separators_only", "pattern=x,type=| |", true},
-		{"log_invalid", "log=verbose,pattern=x", true},
-		{"continue_invalid", "pattern=x,continue=maybe", true},
-		{"domain_append_invalid", "pattern=x,domain_append=maybe", true},
-		{"subnet_invalid", "pattern=x,subnet=notacidr", true},
-		{"id_and_idset_mutual_exclusion", "pattern=x,id=a,id_set=b", true},
-		{"ok_minimal", "pattern=nid{04d}", false},
-		{"ok_multi", "name=r1,log=debug,pattern=x,continue=yes,domain_append=on,type=Node| NodeBMC ,subnet=172.16.0.0/24|172.16.1.0/24", false},
-		{"id_set_unimplemented", "pattern=x,id_set=x1000s[0-3]c0b0n[0-7]", true},
+		{"missing_pattern", "name:r1,type:Node", true},
+		{"type_empty", "pattern:x,type:", true},
+		{"type_whitespace", "pattern:x,type:   ", true},
+		{"type_separators_only", "pattern:x,type:| |", true},
+		{"log_invalid", "log:verbose,pattern:x", true},
+		{"continue_invalid", "pattern:x,continue:maybe", true},
+		{"domain_append_invalid", "pattern:x,domain_append:maybe", true},
+		{"subnet_invalid", "pattern:x,subnet:notacidr", true},
+		{"id_and_idset_mutual_exclusion", "pattern:x,id:a,id_set:b", true},
+		{"ok_minimal", "pattern:nid{04d}", false},
+		{"ok_multi", "name:r1,log:debug,pattern:x,continue:yes,domain_append:on,type:Node| NodeBMC ,subnet:172.16.0.0/24|172.16.1.0/24", false},
+		{"id_set_unimplemented", "pattern:x,id_set:x1000s[0-3]c0b0n[0-7]", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

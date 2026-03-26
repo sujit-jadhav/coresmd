@@ -14,7 +14,7 @@ var (
 )
 
 // ErrKeyValFormat represents an error that occurs when a hostname rule element
-// does not follow the key=value format.
+// does not follow the key:val format.
 type ErrKeyValFormat struct {
 	Elem int
 	Got  string
@@ -28,11 +28,11 @@ func NewErrKeyValFormat(elem int, got string) ErrKeyValFormat {
 }
 
 func (ekvf ErrKeyValFormat) Error() string {
-	return fmt.Sprintf("element %d: expected key=val, got %q", ekvf.Elem, ekvf.Got)
+	return fmt.Sprintf("element %d: expected key:val, got %q", ekvf.Elem, ekvf.Got)
 }
 
 // ErrNoKey represents an error that occurs when a rule has no key (e.g.
-// '=val').
+// ':val').
 type ErrNoKey struct {
 	Elem int
 	Got  string

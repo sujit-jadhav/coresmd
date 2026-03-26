@@ -68,7 +68,7 @@ func TestParseConfig_HostnameRule(t *testing.T) {
 		"tftp_port=1069",
 		"domain=cluster.local",
 		"hostname_log=info",
-		"hostname_rule=name=special,type=Node,id=x1000s0c0b0n0,pattern=login-{id},domain=mgmt.local",
+		"hostname_rule=name:special,type:Node,id:x1000s0c0b0n0,pattern:login-{id},domain:mgmt.local",
 	}
 
 	cfg, errs := parseConfig(args...)

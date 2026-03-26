@@ -88,8 +88,8 @@ server4:
     #
     #   - coresmd: |
     #       ...
-    #       hostname_rule=type=Node,pattern="{id}"
-    #       hostname_rule=type=NodeBMC,pattern="{id}"
+    #       hostname_rule=type:Node,pattern:"{id}"
+    #       hostname_rule=type:NodeBMC,pattern:"{id}"
     #       domain=cluster.local
     #
     # {id} will be expanded to the node/BMC's xname and the domain cluster.local
@@ -186,11 +186,11 @@ server4:
         domain=openchami.cluster
         /* OPTIONAL: hostname rules (see examples/coredhcp/hostnames.md) */
         hostname_log=info
-        hostname_rule=type=Node,pattern=nid{04d}
-        hostname_rule=type=NodeBMC,pattern=bmc{04d}
-        hostname_rule=type=HSNSwitch,pattern={id}
+        hostname_rule=type:Node,pattern:nid{04d}
+        hostname_rule=type:NodeBMC,pattern:bmc{04d}
+        hostname_rule=type:HSNSwitch,pattern:{id}
         /* OPTIONAL: override built-in fallback (default is unknown-{04d}) */
-        hostname_rule=pattern=unknown-{04d}
+        hostname_rule=pattern:unknown-{04d}
 
     # Any requests reaching this point are unknown to SMD and it is up to the
     # administrator to decide how to handle unknown packets.
@@ -338,10 +338,10 @@ server6:
         tftp_port=69
         domain=openchami.cluster
         hostname_log=info
-        hostname_rule=type=Node,pattern=nid{04d}
-        hostname_rule=type=NodeBMC,pattern=bmc{04d}
-        hostname_rule=type=HSNSwitch,pattern={id}
-        hostname_rule=pattern=unknown-{04d}
+        hostname_rule=type:Node,pattern:nid{04d}
+        hostname_rule=type:NodeBMC,pattern:bmc{04d}
+        hostname_rule=type:HSNSwitch,pattern:{id}
+        hostname_rule=pattern:unknown-{04d}
 
     # NOTE: The bootloop plugin currently only supports DHCPv4 and is not
     # available for DHCPv6. For DHCPv6, consider using other mechanisms for

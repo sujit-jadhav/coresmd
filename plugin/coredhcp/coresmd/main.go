@@ -301,7 +301,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 		case "bmc_pattern":
 			bmcPattern := strings.Trim(opt[1], `'"`)
 			if bmcPattern != "" {
-				bmcRuleStr := fmt.Sprintf("type=NodeBMC,pattern=%s", bmcPattern)
+				bmcRuleStr := fmt.Sprintf("type:NodeBMC,pattern:%s", bmcPattern)
 				if bmcRule, err := rule.ParseRule(bmcRuleStr); err != nil {
 					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
 					continue
@@ -312,7 +312,7 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 		case "node_pattern":
 			nodePattern := strings.Trim(opt[1], `"'`)
 			if nodePattern != "" {
-				nodeRuleStr := fmt.Sprintf("type=Node,pattern=%s", nodePattern)
+				nodeRuleStr := fmt.Sprintf("type:Node,pattern:%s", nodePattern)
 				if nodeRule, err := rule.ParseRule(nodeRuleStr); err != nil {
 					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
 					continue

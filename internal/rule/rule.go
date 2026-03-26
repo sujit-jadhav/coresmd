@@ -51,7 +51,7 @@ type Rule struct {
 }
 
 func (r Rule) String() string {
-	return fmt.Sprintf("name=%s,log=%s,%s,%s",
+	return fmt.Sprintf("name:%s,log:%s,%s,%s",
 		r.Name,
 		r.Log,
 		r.Match,
@@ -135,7 +135,7 @@ func (m Match) String() string {
 
 	if m.Types != nil {
 		var notfirst bool
-		typStr := ",types="
+		typStr := ",types:"
 		for typ := range m.Types {
 			if notfirst {
 				typStr += fmt.Sprintf("|%s", typ)
@@ -149,7 +149,7 @@ func (m Match) String() string {
 
 	if m.Subnets != nil {
 		var notfirst bool
-		subnetStr := ",subnets="
+		subnetStr := ",subnets:"
 		for _, subnet := range m.Subnets {
 			if notfirst {
 				subnetStr += fmt.Sprintf("|%s", subnet)
@@ -162,11 +162,11 @@ func (m Match) String() string {
 	}
 
 	if id := strings.TrimSpace(m.ID); id != "" {
-		matchStr += fmt.Sprintf(",id=%s", id)
+		matchStr += fmt.Sprintf(",id:%s", id)
 	}
 
 	if m.IDSet != nil {
-		matchStr += fmt.Sprintf(",id_set=%s", m.IDSet)
+		matchStr += fmt.Sprintf(",id_set:%s", m.IDSet)
 	}
 
 	return strings.TrimLeft(matchStr, ",")
@@ -185,16 +185,16 @@ func (a Action) String() string {
 
 	pat := strings.TrimSpace(a.Pattern)
 	if pat != "" {
-		actionStr += fmt.Sprintf(",pattern=%s", pat)
+		actionStr += fmt.Sprintf(",pattern:%s", pat)
 	}
 
 	dom := strings.TrimSpace(a.Domain)
 	if dom != "" {
-		actionStr += fmt.Sprintf(",domain=%s", dom)
+		actionStr += fmt.Sprintf(",domain:%s", dom)
 	}
 
-	actionStr += fmt.Sprintf(",domain_append=%v", a.DomainAppend)
-	actionStr += fmt.Sprintf(",continue=%v", a.Continue)
+	actionStr += fmt.Sprintf(",domain_append:%v", a.DomainAppend)
+	actionStr += fmt.Sprintf(",continue:%v", a.Continue)
 
 	return strings.TrimLeft(actionStr, ",")
 }
@@ -214,7 +214,8 @@ func CompileIDSet(expr string) (IDSetMatcher, error) {
 }
 
 // ParseRule parses a string representing a hostname rule (everything to the
-// right of 'hostname_rule=') and returns a representative Rule.
+// right of 'hostname_rule=') and returns a representative Rule. Within the
+// rule string, key/value delimiters are ':' (for example: type:Node).
 func ParseRule(rule string) (Rule, error) {
 	comps, err := createRuleCompDict(rule)
 	if err != nil {
@@ -275,8 +276,8 @@ func ParseRule(rule string) (Rule, error) {
 	// match by type (optional; multivalue)
 	//
 	// Examples:
-	//  - type=Node                    # single type
-	//  - type=Node|NodeBMC|HSNSwitch  # multiple types
+	//  - type:Node                    # single type
+	//  - type:Node|NodeBMC|HSNSwitch  # multiple types
 	if matchType, ok := comps["type"]; ok && strings.TrimSpace(matchType) != "" {
 		m.Types = make(map[string]bool)
 		for _, t := range strings.Split(matchType, "|") {
@@ -298,8 +299,8 @@ func ParseRule(rule string) (Rule, error) {
 	// match by subnet (optional; multivalue)
 	//
 	// Examples:
-	//  - subnet=172.16.0.0/24                # single subnet
-	//  - subnet=172.16.0.0/24|172.16.1.0/21  # multiple subnets
+	//  - subnet:172.16.0.0/24                # single subnet
+	//  - subnet:172.16.0.0/24|172.16.1.0/21  # multiple subnets
 	if matchSubnet, ok := comps["subnet"]; ok && matchSubnet != "" {
 		for _, s := range strings.Split(matchSubnet, "|") {
 			if _, ipnet, err := net.ParseCIDR(strings.TrimSpace(s)); err != nil {
@@ -489,6 +490,7 @@ func setHostname(pattern, domain string, ii iface.IfaceInfo, rule Rule) (hname s
 
 // createRuleCompDict parses a rule string and creates a map of each rule
 // component's key mapped to its value. Duplicate keys are not allowed.
+// Rule elements are formatted as key:val (not key=val).
 func createRuleCompDict(rule string) (map[string]string, error) {
 	rule = strings.TrimSpace(rule)
 	if rule == "" {
@@ -501,7 +503,7 @@ func createRuleCompDict(rule string) (map[string]string, error) {
 		return nil, err
 	}
 
-	// Parse each rule component (key=val) and place into dictionary
+		// Parse each rule component (key:val) and place into dictionary
 	comps := make(map[string]string, len(parts))
 	for idx, p := range parts {
 		// Skip empty space
@@ -510,8 +512,8 @@ func createRuleCompDict(rule string) (map[string]string, error) {
 			continue
 		}
 
-		// Split key=value
-		key, val, ok := strings.Cut(p, "=")
+		// Split key:val
+		key, val, ok := strings.Cut(p, ":")
 		if !ok {
 			return nil, NewErrKeyValFormat(idx, p)
 		}

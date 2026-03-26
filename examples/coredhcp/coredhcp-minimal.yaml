@@ -37,10 +37,10 @@ server4:
         cache_valid=30s
         lease_time=24h
         /* Hostname policy rules (see examples/coredhcp/hostnames.md) */
-        hostname_rule=type=Node,pattern=nid{04d}
-        hostname_rule=type=HSNSwitch,pattern={id}
+        hostname_rule=type:Node,pattern:nid{04d}
+        hostname_rule=type:HSNSwitch,pattern:{id}
         /* OPTIONAL: override built-in fallback (default is unknown-{04d}) */
-        hostname_rule=pattern=unknown-{04d}
+        hostname_rule=pattern:unknown-{04d}
 
 ###############################################################################
 # DHCPv6 Configuration
@@ -65,7 +65,7 @@ server6:
         cache_valid=30s
         lease_time=24h
         /* Hostname policy rules (see examples/coredhcp/hostnames.md) */
-        hostname_rule=type=Node,pattern=nid{04d}
-        hostname_rule=type=HSNSwitch,pattern={id}
+        hostname_rule=type:Node,pattern:nid{04d}
+        hostname_rule=type:HSNSwitch,pattern:{id}
         /* OPTIONAL: override built-in fallback (default is unknown-{04d}) */
-        hostname_rule=pattern=unknown-{04d}
+        hostname_rule=pattern:unknown-{04d}
