@@ -176,8 +176,8 @@ func (m Match) String() string {
 // Action represents an action to take upon a rule matching
 type Action struct {
 	Hostname     string   // hostname pattern to apply
-	Domain       string   // domain to append to hostname, overrides global domain, "none" ignores
-	DomainAppend bool     // whether to append domain or override it
+	Domain       string   // rule-specific domain to use when generating the FQDN
+	DomainAppend string   // controls when/how to append domain to hostname (rule vs. global vs. both)
 	Routers      []net.IP // router IPs for selected component(s)
 	Continue     bool     // whether to continue parsing subsequent rules if this matches
 }
@@ -195,7 +195,9 @@ func (a Action) String() string {
 		actionStr += fmt.Sprintf(",domain:%s", dom)
 	}
 
-	actionStr += fmt.Sprintf(",domain_append:%v", a.DomainAppend)
+	if da := strings.TrimSpace(a.DomainAppend); da != "" {
+		actionStr += fmt.Sprintf(",domain_append:%s", da)
+	}
 	actionStr += fmt.Sprintf(",continue:%v", a.Continue)
 
 	if len(a.Routers) > 0 {
@@ -277,6 +279,11 @@ func ParseRule(rule string) (Rule, error) {
 
 	// domain override (optional)
 	if dom, ok := comps["domain"]; ok && dom != "" {
+		// domain:none doesn't make sense when domain_append:none is intended,
+		// use it instead
+		if strings.EqualFold(strings.TrimSpace(dom), "none") {
+			return Rule{}, NewErrInvalidValue("domain", dom, "a domain name (or use domain_append:none)")
+		}
 		a.Domain = dom
 	}
 
@@ -290,11 +297,23 @@ func ParseRule(rule string) (Rule, error) {
 	}
 
 	// domain_append (optional)
+	//
+	// Valid values:
+	//   - "global"      - final hostname: <hostname>.<global_domain>
+	//   - "rule"        - final hostname: <hostname>.<rule_domain>
+	//   - "global,rule" - final hostname: <hostname>.<global_domain>.<rule_domain>
+	//   - "none"        - final hostname: <hostname>
+	//
+	// When omitted, CoreSMD applies the default behavior:
+	//   - if global domain is set and rule domain is unset: append global domain
+	//   - if global domain is set and rule domain is set: append rule domain (overriding global)
+	//   - if global domain is unset and rule domain is unset: leave hostname alone
+	//   - if global domain is unset and rule domain is set: append rule domain
 	if domapp, ok := comps["domain_append"]; ok && domapp != "" {
-		if b, err := parse.ParseBoolLoose(domapp); err != nil {
-			return Rule{}, NewErrInvalidValue("domain_append", domapp, "boolean")
+		if norm, err := normalizeDomainAppend(domapp); err != nil {
+			return Rule{}, NewErrInvalidValue("domain_append", domapp, "'global', 'rule', 'global|rule', 'rule|global', or 'none'")
 		} else {
-			a.DomainAppend = b
+			a.DomainAppend = norm
 		}
 	}
 
@@ -367,6 +386,79 @@ func ParseRule(rule string) (Rule, error) {
 	}
 
 	return r, nil
+}
+
+// normalizeDomainAppend validates and normalizes the domain_append value.
+//
+// Accepted inputs (case-insensitive, whitespace-tolerant):
+//   - "global"
+//   - "rule"
+//   - "global|rule"
+//   - "rule|global"
+//   - "none"
+//
+// Order matters: "global|rule" and "rule|global" are distinct.
+//
+// Returned values are normalized to lowercase with no whitespace and preserved
+// order: "global", "rule", "global|rule", "rule|global", or "none".
+func normalizeDomainAppend(raw string) (string, error) {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return "", fmt.Errorf("empty")
+	}
+
+	parts := strings.Split(raw, "|")
+	var hasGlobal, hasRule, hasNone bool
+	order := make([]string, 0, 2)
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		switch p {
+		case "global":
+			if hasGlobal {
+				return "", fmt.Errorf("duplicate token %q", p)
+			}
+			hasGlobal = true
+			order = append(order, "global")
+		case "rule":
+			if hasRule {
+				return "", fmt.Errorf("duplicate token %q", p)
+			}
+			hasRule = true
+			order = append(order, "rule")
+		case "none":
+			if hasNone {
+				return "", fmt.Errorf("duplicate token %q", p)
+			}
+			hasNone = true
+			order = append(order, "none")
+		default:
+			return "", fmt.Errorf("invalid token %q", p)
+		}
+	}
+
+	if hasNone {
+		// none cannot be combined with anything else
+		if hasGlobal || hasRule {
+			return "", fmt.Errorf("'none' cannot be combined with other values")
+		}
+		return "none", nil
+	}
+
+	if !hasGlobal && !hasRule {
+		return "", fmt.Errorf("no valid values")
+	}
+	if hasGlobal && hasRule {
+		// Preserve order as supplied.
+		// order contains both tokens once each.
+		return strings.Join(order, "|"), nil
+	}
+	if hasGlobal {
+		return "global", nil
+	}
+	return "rule", nil
 }
 
 // Evaluate4 takes interface information from a DHCPv4 request and a list of

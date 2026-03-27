@@ -12,6 +12,7 @@ import (
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/dhcpv6"
+
 	"github.com/openchami/coresmd/internal/iface"
 )
 
@@ -77,10 +78,16 @@ func TestParseRule_Table(t *testing.T) {
 		{"log_invalid", "log:verbose,hostname:x", true},
 		{"continue_invalid", "hostname:x,continue:maybe", true},
 		{"domain_append_invalid", "hostname:x,domain_append:maybe", true},
+		{"domain_append_none_combo_invalid", "hostname:x,domain_append:none|rule", true},
+		{"domain_append_duplicate_global", "hostname:x,domain:override.local,domain_append:global|global", true},
+		{"domain_append_duplicate_rule", "hostname:x,domain:override.local,domain_append:rule|rule", true},
+		{"domain_append_duplicate_mixed", "hostname:x,domain:override.local,domain_append:global|rule|global", true},
+		{"domain_none_removed", "hostname:x,domain:none", true},
 		{"subnet_invalid", "hostname:x,subnet:notacidr", true},
 		{"id_and_idset_mutual_exclusion", "hostname:x,id:a,id_set:b", true},
 		{"ok_minimal", "hostname:nid{04d}", false},
-		{"ok_multi", "name:r1,log:debug,hostname:x,continue:yes,domain_append:on,type:Node| NodeBMC ,subnet:172.16.0.0/24|172.16.1.0/24", false},
+		{"ok_multi", "name:r1,log:debug,hostname:x,continue:yes,domain_append:global|rule,type:Node| NodeBMC ,subnet:172.16.0.0/24|172.16.1.0/24", false},
+		{"ok_domain_append_rule_global", "hostname:x,domain:override.local,domain_append:rule|global", false},
 		{"id_set_unimplemented", "hostname:x,id_set:x1000s[0-3]c0b0n[0-7]", true},
 	}
 	for _, tt := range tests {
@@ -105,6 +112,89 @@ func TestParseRule_Table(t *testing.T) {
 				if r.Match.Types == nil || !r.Match.Types["Node"] || !r.Match.Types["NodeBMC"] {
 					t.Fatalf("expected types to include %q and %q got=%v", "Node", "NodeBMC", r.Match.Types)
 				}
+				if r.Action.DomainAppend != "global|rule" {
+					t.Fatalf("expected domain_append=%q got=%q", "global|rule", r.Action.DomainAppend)
+				}
+			}
+			if tt.name == "ok_domain_append_rule_global" {
+				if r.Action.DomainAppend != "rule|global" {
+					t.Fatalf("expected domain_append=%q got=%q", "rule|global", r.Action.DomainAppend)
+				}
+			}
+		})
+	}
+}
+
+func TestLookupHostname_DomainAppendModes(t *testing.T) {
+	ii := iface.IfaceInfo{CompID: "x1000s0c0b0n0", CompNID: 7, Type: "Node", MAC: "aa", IPList: []net.IP{net.ParseIP("172.16.0.10")}}
+
+	tests := []struct {
+		name      string
+		globalDom string
+		rule      Rule
+		want      string
+	}{
+		{
+			name:      "default_global_only",
+			globalDom: "cluster.local",
+			rule:      Rule{Action: Action{Hostname: "nid{04d}"}},
+			want:      "nid0007.cluster.local",
+		},
+		{
+			name:      "default_rule_overrides_global",
+			globalDom: "cluster.local",
+			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local"}},
+			want:      "nid0007.override.local",
+		},
+		{
+			name:      "explicit_global",
+			globalDom: "cluster.local",
+			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "global"}},
+			want:      "nid0007.cluster.local",
+		},
+		{
+			name:      "explicit_rule",
+			globalDom: "cluster.local",
+			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "rule"}},
+			want:      "nid0007.override.local",
+		},
+		{
+			name:      "explicit_global_rule",
+			globalDom: "cluster.local",
+			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "global|rule"}},
+			want:      "nid0007.cluster.local.override.local",
+		},
+		{
+			name:      "explicit_rule_global_order_matters",
+			globalDom: "cluster.local",
+			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "rule|global"}},
+			want:      "nid0007.override.local.cluster.local",
+		},
+		{
+			name:      "explicit_none",
+			globalDom: "cluster.local",
+			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "none"}},
+			want:      "nid0007",
+		},
+		{
+			name:      "explicit_rule_without_rule_domain",
+			globalDom: "cluster.local",
+			rule:      Rule{Action: Action{Hostname: "nid{04d}", DomainAppend: "rule"}},
+			want:      "nid0007",
+		},
+		{
+			name:      "leading_dots_trimmed",
+			globalDom: ".cluster.local",
+			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: ".override.local", DomainAppend: "global|rule"}},
+			want:      "nid0007.cluster.local.override.local",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := lookupHostname(tt.rule.Action.Hostname, tt.globalDom, ii, tt.rule)
+			if got != tt.want {
+				t.Fatalf("expected=%q got=%q", tt.want, got)
 			}
 		})
 	}
@@ -144,7 +234,6 @@ func TestRuleMatchIface_Combinations(t *testing.T) {
 	}
 }
 
-
 func TestEvaluate4_HostnameRoutersAndDefault(t *testing.T) {
 	ii := iface.IfaceInfo{CompID: "x1000s0c0b0n0", CompNID: 7, Type: "Node", MAC: "aa", IPList: []net.IP{net.ParseIP("172.16.0.10")}}
 
@@ -154,8 +243,8 @@ func TestEvaluate4_HostnameRoutersAndDefault(t *testing.T) {
 		t.Fatalf("unexpected error creating dhcpv4 message: %v", err)
 	}
 	rules := []Rule{{
-		Name:  "node",
-		Match: Match{Types: map[string]bool{"Node": true}},
+		Name:   "node",
+		Match:  Match{Types: map[string]bool{"Node": true}},
 		Action: Action{Hostname: "nid{04d}", Domain: "override.local", Routers: []net.IP{net.ParseIP("192.0.2.1"), net.ParseIP("192.0.2.2")}},
 	}}
 	Evaluate4(nil, ii, "cluster.local", "none", resp, rules)

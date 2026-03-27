@@ -28,10 +28,10 @@ SPDX-License-Identifier: MIT
       - [`id:XNAME`](#idxname)
       - [`id_set:EXPR`](#id_setexpr)
     - [Action Keys](#action-keys)
-      - [`hostname:PATTERN`](#hostnamepattern-optional)
+      - [`hostname:PATTERN`](#hostnamepattern)
+      - [`routers:IP[|IP...]`](#routersipip)
       - [`domain:DOMAIN`](#domaindomain-1)
-      - [`routers:X.X.X.X|Y.Y.Y.Y`](#routersxxxxxxxyyyyyyyy)
-      - [`domain_append:{true|false}`](#domain_appendtruefalse)
+      - [`domain_append:MODE`](#domain_appendmode)
       - [`continue:{true|false}`](#continuetruefalse)
       - [`name:STRING`](#namestring)
       - [`log:{info|debug|none}`](#loginfodebugnone)
@@ -70,10 +70,10 @@ In a CoreDHCP configuration:
 
 ## Summary
 
-CoreSMD can set various DHCP options (e.g. hostname (12), routers (3)) using an
-ordered list of rules. Each rule matches on SMD inventory attributes (component
-type, component ID, and the assigned IP address) and sets the appropriate DHCP
-options based on the actions defined in the rule.
+CoreSMD can set various DHCP options (e.g. hostname (option 12), routers (option
+3)) using an ordered list of rules. Each rule matches on SMD inventory
+attributes (component type, component ID, and the assigned IP address) and sets
+the appropriate DHCP options based on the actions defined in the rule.
 
 Rules are evaluated in order. A matching rule sets the relevant DHCP options
 and may halt evaluation (the default or if `continue:false`) or allow
@@ -149,8 +149,8 @@ Use the full component identifier from SMD:
 
 ## Rule Syntax
 
-`RULE` is a comma-separated list of `key:val` components organized by
-"matching key-value pairs followed by "action" key-value pairs:
+`RULE` is a comma-separated list of `key:val` components organized as match
+key-value pairs followed by action key-value pairs:
 
 ```
 rule=<match_keyval(s)>,<action_keyval(s)>
@@ -217,7 +217,7 @@ Mutually exclusive with `id`.
 ### Action Keys
 
 Rules may apply one or more actions when matched. At least one action must be
-specified. If no match string is specified, the action(s) will apply to all
+specified. If no match keys are specified, the action(s) will apply to all
 incoming DHCP requests.
 
 #### `hostname:PATTERN`
@@ -227,7 +227,7 @@ legacy `pattern` key. See [Pattern Syntax](#pattern-syntax) above.
 
 **Default:** omitted (no hostname set by this rule)
 
-#### `routers:IP[|IP...]
+#### `routers:IP[|IP...]`
 
 Set DHCPv4 Router option (RFC 2132 option 3) for the matched host. Multiple
 routers may be specified using `|`.
@@ -241,30 +241,35 @@ This action applies to DHCPv4 only.
 Domain to use with hostname if rule matches. Leading dots are ignored. See
 `domain_append` below for modification of how domain behavior is applied.
 
-If `domain:none`, no domain will be appended to the hostname, regardless of
-global `domain` or `domain_append` rule setting.
+**Default:** omitted (use global `domain` if set, otherwise none)
 
-**Default:** omitted (global domain used, if set, otherwise none)
+#### `domain_append:MODE`
 
-Default when omitted: use the global `domain` (if set)
+Controls how domains are appended to the hostname.
 
-#### `domain_append:{true|false}`
+Each MODE and its effect are detailed below:
 
-Controls whether the rule-specific `domain` is appended after the global
-`domain` (`true`) or whether the rule-specific `domain` replaces the global
-`domain` (`false`). This behavior only occurs when the rule-specific `domain`
-is not set to `none`.
+| **`domain_append`** | **Final Hostname** |
+|---|---|
+| `global` | `<hostname>.<global_domain>` |
+| `rule` | `<hostname>.<rule_domain>` |
+| `global\|rule` | `<hostname>.<global_domain>.<rule_domain>` |
+| `rule\|global` | `<hostname>.<rule_domain>.<global_domain>` |
+| `none` | `<hostname>` |
 
-If the rule-specific `domain:none`, `domain_append` and the global `domain`
-have no effect. In other words, the hostname is not appended with any domain.
+Order matters for the combined forms (`global|rule` vs `rule|global`).
 
-For instance:
+If a domain requested by `domain_append` is not set (for example `global` when
+the global `domain` is unset), that portion is omitted.
 
-- `domain_append:true`: the hostname is `<hostname>.<global_domain>.<rule_domain>`
-- `domain_append:false`: the hostname is `<hostname>.<rule_domain>`
-- `domain:none`: the hostname is `<hostname>`
+**Default when omitted:**
 
-**Default:** `false`
+| **Global `domain` Set?** | **Rule `domain` Set?** | **Result** |
+|---|---|---|
+| yes | no | append global domain |
+| yes | yes | append rule domain (overrides global) |
+| no | no | no domain appended |
+| no | yes | append rule domain |
 
 #### `continue:{true|false}`
 
@@ -410,8 +415,9 @@ to DHCP option 3 for matching DHCPv4 clients.
 
 ### 6. Suppress domain suffix for selected hosts
 
-Use `domain:none` in the rule action. This overrides global `domain` and
-overrides `domain_append:true`.
+Use `domain_append:none` in the rule action. This suppresses all domain
+suffixing, regardless of global `domain` and regardless of other
+`domain_append` settings.
 
 ```yaml
 - coresmd: |
@@ -419,10 +425,10 @@ overrides `domain_append:true`.
     rule=type:Node,hostname:nid{04d}
 
     /* BMCs get *no* domain suffix */
-    rule=type:NodeBMC,hostname:bmc{04d},domain:none,domain_append:true
+    rule=type:NodeBMC,hostname:bmc{04d},domain_append:none
 ```
 
-Use `domain:none` to suppress suffixing, even if `domain_append:true` is set.
+Use `domain_append:none` to suppress suffixing.
 
 | NID | Type | Hostname |
 |-----|------|----------|
@@ -482,7 +488,7 @@ while preserving rule ordering and allowing additional matching criteria.
 - At least one action must be specified: `hostname` and/or `routers`.
 - `type:` is optional, but if present must include at least one type.
 - Only the first assigned IP is used for subnet matching.
-- `domain:none` suppresses all domain suffixing (even if `domain_append:true`).
+- `domain_append:none` suppresses all domain suffixing.
 - `id_set` is reserved; rules using it will fail to parse until implemented.
 
 If you do not want the built-in fallback (`unknown-{04d}`) to apply, provide a
