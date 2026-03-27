@@ -99,7 +99,7 @@ Controls rule logging.
 - `debug`: log matching and non-matching rules (useful for troubleshooting)
 - `none`: disable rule logging
 
-**Default:** `none`
+**Default:** `info`
 
 ### `rule=RULE`
 

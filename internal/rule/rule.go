@@ -248,6 +248,10 @@ func ParseRule(rule string) (Rule, error) {
 		default:
 			return Rule{}, NewErrInvalidValue("log", log, "'info', 'debug', or 'none'")
 		}
+	} else {
+		// Inherit from global rule_log. The caller is responsible for setting
+		// the effective default (e.g. to the global rule_log value) if desired.
+		r.Log = ""
 	}
 
 	// name, rule identifier (generated below if not set)
@@ -508,9 +512,9 @@ func Evaluate4(logger *logrus.Entry, ii iface.IfaceInfo, globalDomain, ruleLog s
 	logMatch := func(idx int, rule Rule) {
 		var loggingEnabled bool
 		switch ruleLog {
-		case "debug", "info":
+		case "debug", "info", "":
 			loggingEnabled = true
-		case "", "none":
+		case "none":
 			// Do nothing
 		default:
 			err := NewErrInvalidValue("rule_log", ruleLog, "'debug', 'info', or 'none'")
@@ -621,9 +625,9 @@ func Evaluate6(logger *logrus.Entry, ii iface.IfaceInfo, globalDomain, ruleLog s
 	logMatch := func(idx int, rule Rule) {
 		var loggingEnabled bool
 		switch ruleLog {
-		case "debug", "info":
+		case "debug", "info", "":
 			loggingEnabled = true
-		case "", "none":
+		case "none":
 			// Do nothing
 		default:
 			err := NewErrInvalidValue("rule_log", ruleLog, "'debug', 'info', or 'none'")

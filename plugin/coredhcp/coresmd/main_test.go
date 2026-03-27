@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/openchami/coresmd/internal/cache"
+	"github.com/openchami/coresmd/internal/rule"
 	"github.com/openchami/coresmd/internal/tftp"
 )
 
@@ -86,6 +87,10 @@ func TestParseConfig_Rules(t *testing.T) {
 	for _, r := range cfg.rules {
 		if r.Name == "special" {
 			found = true
+			// Rule-level log is omitted; it should inherit from global rule_log.
+			if r.Log != "" {
+				t.Fatalf("expected rule.Log to be empty before validate, got %q", r.Log)
+			}
 			if r.Match.ID != "x1000s0c0b0n0" {
 				t.Fatalf("special rule id=%q", r.Match.ID)
 			}
@@ -102,6 +107,35 @@ func TestParseConfig_Rules(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("did not find explicit rule named 'special'")
+	}
+}
+
+func TestConfigValidate_RuleLogInheritance(t *testing.T) {
+	svc, _ := url.Parse("https://svc.example.test")
+	ipxe, _ := url.Parse("https://ipxe.example.test")
+
+	// Create a config with a rule that omits Log; validate should set the
+	// effective per-rule log to the global rule_log value.
+	cfg := Config{svcBaseURI: svc, ipxeBaseURI: ipxe, ruleLog: "debug"}
+	cfg.rules = []rule.Rule{{Name: "r1", Log: "", Action: rule.Action{Hostname: "nid{04d}"}}}
+
+	_, errs := cfg.validate()
+	if len(errs) != 0 {
+		t.Fatalf("validate() errs=%v", errs)
+	}
+	if cfg.rules[0].Log != "debug" {
+		t.Fatalf("expected inherited rule log %q got %q", "debug", cfg.rules[0].Log)
+	}
+
+	// Explicit rule log must override global.
+	cfg = Config{svcBaseURI: svc, ipxeBaseURI: ipxe, ruleLog: "debug"}
+	cfg.rules = []rule.Rule{{Name: "r1", Log: "none", Action: rule.Action{Hostname: "nid{04d}"}}}
+	_, errs = cfg.validate()
+	if len(errs) != 0 {
+		t.Fatalf("validate() errs=%v", errs)
+	}
+	if cfg.rules[0].Log != "none" {
+		t.Fatalf("expected explicit rule log %q got %q", "none", cfg.rules[0].Log)
 	}
 }
 
@@ -128,6 +162,9 @@ func TestConfigValidate_DefaultsApplied(t *testing.T) {
 	}
 	if cfg.tftpDir != tftp.DefaultTFTPDirectory {
 		t.Fatalf("tftpDir=%q want %q", cfg.tftpDir, tftp.DefaultTFTPDirectory)
+	}
+	if cfg.ruleLog != "info" {
+		t.Fatalf("ruleLog=%q want %q", cfg.ruleLog, "info")
 	}
 }
 

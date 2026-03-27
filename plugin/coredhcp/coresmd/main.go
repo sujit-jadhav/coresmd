@@ -398,6 +398,17 @@ func (c *Config) validate() (warns []string, errs []error) {
 	if c.domain == "" {
 		warns = append(warns, "domain unset, not configuring")
 	}
+	if strings.TrimSpace(c.ruleLog) == "" {
+		warns = append(warns, "rule_log unset, defaulting to info")
+		c.ruleLog = "info"
+	}
+	// Apply default per-rule log behavior; if rule-level log is omitted, inherit
+	// the global rule_log value.
+	for i := range c.rules {
+		if strings.TrimSpace(c.rules[i].Log) == "" {
+			c.rules[i].Log = c.ruleLog
+		}
+	}
 	return
 }
 

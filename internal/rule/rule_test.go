@@ -99,6 +99,13 @@ func TestParseRule_Table(t *testing.T) {
 			if tt.wantErr {
 				return
 			}
+			// ParseRule() does not know the global rule_log value. If 'log' is
+			// omitted, it should be left empty for the caller to apply defaults.
+			if tt.name == "ok_minimal" || tt.name == "routers_only_ok" {
+				if r.Log != "" {
+					t.Fatalf("expected default rule log to be empty got=%q", r.Log)
+				}
+			}
 			if tt.name != "routers_only_ok" && r.Action.Hostname == "" {
 				t.Fatalf("expected non-empty hostname got=%q", r.Action.Hostname)
 			}

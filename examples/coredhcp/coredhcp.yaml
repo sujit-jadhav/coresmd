@@ -128,7 +128,7 @@ server4:
     #   An optional domain suffix to append to hostnames. If omitted, no domain
     #   will be appended.
     #
-    # rule_log (OPTIONAL, enum, default=none)
+    # rule_log (OPTIONAL, enum, default=info)
     #   Controls rule logging.
     #
     #   Possible values:
