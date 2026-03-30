@@ -267,11 +267,15 @@ func ParseRule(rule string) (Rule, error) {
 	// router (action)
 	if rtrs, ok := comps["routers"]; ok && rtrs != "" {
 		for _, r := range strings.Split(rtrs, "|") {
-			if ip := net.ParseIP(strings.TrimSpace(r)); ip == nil {
-				return Rule{}, NewErrInvalidValue("routers", r, "valid IP address")
-			} else {
-				a.Routers = append(a.Routers, ip)
+			ip := net.ParseIP(strings.TrimSpace(r))
+			if ip == nil {
+				return Rule{}, NewErrInvalidValue("routers", r, "valid IPv4 address")
 			}
+			ip4 := ip.To4()
+			if ip4 == nil {
+				return Rule{}, NewErrInvalidValue("routers", r, "valid IPv4 address")
+			}
+			a.Routers = append(a.Routers, ip4)
 		}
 	}
 
