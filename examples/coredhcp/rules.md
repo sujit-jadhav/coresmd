@@ -5,11 +5,14 @@ SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
 SPDX-License-Identifier: MIT
 -->
 
-# Rules for the CoreSMD CoreDHCP Plugin (Hostnames and Routers)
+# Rich Rules for the CoreSMD CoreDHCP Plugin
+
+Rich rules allow specifying various DHCP options for certain machines using
+match filters.
 
 ## Contents
 
-- [Rules for the CoreSMD CoreDHCP Plugin (Hostnames and Routers)](#rules-for-the-coresmd-coredhcp-plugin-hostnames-and-routers)
+- [Rich Rules for the CoreSMD CoreDHCP Plugin](#rich-rules-for-the-coresmd-coredhcp-plugin)
   - [Contents](#contents)
   - [Quick Start](#quick-start)
   - [Summary](#summary)
@@ -71,7 +74,7 @@ In a CoreDHCP configuration:
 ## Summary
 
 CoreSMD can set various DHCP options (e.g. hostname (option 12), routers (option
-3)) using an ordered list of rules. Each rule matches on SMD inventory
+3), etc.) using an ordered list of rules. Each rule matches on SMD inventory
 attributes (component type, component ID, and the assigned IP address) and sets
 the appropriate DHCP options based on the actions defined in the rule.
 
@@ -230,7 +233,8 @@ legacy `pattern` key. See [Pattern Syntax](#pattern-syntax) above.
 #### `routers:IP[|IP...]`
 
 Set DHCPv4 Router option (RFC 2132 option 3) for the matched host. Multiple
-routers may be specified using `|`.
+routers may be specified using `|`. This action will override any routers set
+with the CoreDHCP `netmask` plugin.
 
 This action applies to DHCPv4 only.
 
