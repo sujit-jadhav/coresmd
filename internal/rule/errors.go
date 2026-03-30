@@ -87,6 +87,8 @@ func (ebq ErrBadQuote) Error() string {
 	return fmt.Sprintf("element %d: bad quoting: %v: got %q", ebq.Elem, ebq.QuoteErr, ebq.Got)
 }
 
+// ErrDuplicateKey represents an error that occurs when a duplicate key is
+// specified.
 type ErrDuplicateKey struct {
 	Elem int
 	Got  string
@@ -105,6 +107,8 @@ func (edk ErrDuplicateKey) Error() string {
 	return fmt.Sprintf("element %d: duplicate key %q: got %q", edk.Elem, edk.Key, edk.Got)
 }
 
+// ErrRequiredKeys represents an error that occurs when one or more required
+// keys are not specified.
 type ErrRequiredKeys struct {
 	Keys []string
 }
@@ -119,6 +123,9 @@ func (erk ErrRequiredKeys) Error() string {
 	return fmt.Sprintf("required key missing, at least one of %v", erk.Keys)
 }
 
+// ErrInvalidValue represents an error where a key has an unexpected value. A
+// string representing the expected value is stored as well to be printed in the
+// error.
 type ErrInvalidValue struct {
 	Key      string
 	Value    string
@@ -137,6 +144,8 @@ func (eiv ErrInvalidValue) Error() string {
 	return fmt.Sprintf("invalid value for key %q (expected %s but got %q)", eiv.Key, eiv.Expected, eiv.Value)
 }
 
+// ErrMutualExclusion represents an error where two or more mutually-exclusive
+// keys were specified.
 type ErrMutualExclusion struct {
 	Keys []string
 }
