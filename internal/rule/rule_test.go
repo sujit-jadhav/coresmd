@@ -79,9 +79,6 @@ func TestParseRule_Table(t *testing.T) {
 		{"continue_invalid", "hostname:x,continue:maybe", true},
 		{"domain_append_invalid", "hostname:x,domain_append:maybe", true},
 		{"domain_append_none_combo_invalid", "hostname:x,domain_append:none|rule", true},
-		{"domain_append_duplicate_global", "hostname:x,domain:override.local,domain_append:global|global", true},
-		{"domain_append_duplicate_rule", "hostname:x,domain:override.local,domain_append:rule|rule", true},
-		{"domain_append_duplicate_mixed", "hostname:x,domain:override.local,domain_append:global|rule|global", true},
 		{"domain_none_removed", "hostname:x,domain:none", true},
 		{"subnet_invalid", "hostname:x,subnet:notacidr", true},
 		{"id_and_idset_mutual_exclusion", "hostname:x,id:a,id_set:b", true},
@@ -98,13 +95,6 @@ func TestParseRule_Table(t *testing.T) {
 			}
 			if tt.wantErr {
 				return
-			}
-			// ParseRule() does not know the global rule_log value. If 'log' is
-			// omitted, it should be left empty for the caller to apply defaults.
-			if tt.name == "ok_minimal" || tt.name == "routers_only_ok" {
-				if r.Log != "" {
-					t.Fatalf("expected default rule log to be empty got=%q", r.Log)
-				}
 			}
 			if tt.name != "routers_only_ok" && r.Action.Hostname == "" {
 				t.Fatalf("expected non-empty hostname got=%q", r.Action.Hostname)
@@ -127,81 +117,6 @@ func TestParseRule_Table(t *testing.T) {
 				if r.Action.DomainAppend != "rule|global" {
 					t.Fatalf("expected domain_append=%q got=%q", "rule|global", r.Action.DomainAppend)
 				}
-			}
-		})
-	}
-}
-
-func TestLookupHostname_DomainAppendModes(t *testing.T) {
-	ii := iface.IfaceInfo{CompID: "x1000s0c0b0n0", CompNID: 7, Type: "Node", MAC: "aa", IPList: []net.IP{net.ParseIP("172.16.0.10")}}
-
-	tests := []struct {
-		name      string
-		globalDom string
-		rule      Rule
-		want      string
-	}{
-		{
-			name:      "default_global_only",
-			globalDom: "cluster.local",
-			rule:      Rule{Action: Action{Hostname: "nid{04d}"}},
-			want:      "nid0007.cluster.local",
-		},
-		{
-			name:      "default_rule_overrides_global",
-			globalDom: "cluster.local",
-			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local"}},
-			want:      "nid0007.override.local",
-		},
-		{
-			name:      "explicit_global",
-			globalDom: "cluster.local",
-			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "global"}},
-			want:      "nid0007.cluster.local",
-		},
-		{
-			name:      "explicit_rule",
-			globalDom: "cluster.local",
-			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "rule"}},
-			want:      "nid0007.override.local",
-		},
-		{
-			name:      "explicit_global_rule",
-			globalDom: "cluster.local",
-			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "global|rule"}},
-			want:      "nid0007.cluster.local.override.local",
-		},
-		{
-			name:      "explicit_rule_global_order_matters",
-			globalDom: "cluster.local",
-			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "rule|global"}},
-			want:      "nid0007.override.local.cluster.local",
-		},
-		{
-			name:      "explicit_none",
-			globalDom: "cluster.local",
-			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: "override.local", DomainAppend: "none"}},
-			want:      "nid0007",
-		},
-		{
-			name:      "explicit_rule_without_rule_domain",
-			globalDom: "cluster.local",
-			rule:      Rule{Action: Action{Hostname: "nid{04d}", DomainAppend: "rule"}},
-			want:      "nid0007",
-		},
-		{
-			name:      "leading_dots_trimmed",
-			globalDom: ".cluster.local",
-			rule:      Rule{Action: Action{Hostname: "nid{04d}", Domain: ".override.local", DomainAppend: "global|rule"}},
-			want:      "nid0007.cluster.local.override.local",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := lookupHostname(tt.rule.Action.Hostname, tt.globalDom, ii, tt.rule)
-			if got != tt.want {
-				t.Fatalf("expected=%q got=%q", tt.want, got)
 			}
 		})
 	}

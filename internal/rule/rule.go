@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
@@ -24,6 +25,7 @@ import (
 const DefaultPattern = "unknown-{04d}"
 
 var AllowedKeys = []string{
+	"cidr",
 	"continue",
 	"domain",
 	"domain_append",
@@ -32,6 +34,7 @@ var AllowedKeys = []string{
 	"id_set",
 	"log",
 	"name",
+	"netmask",
 	"routers",
 	"subnet",
 	"type",
@@ -175,11 +178,12 @@ func (m Match) String() string {
 
 // Action represents an action to take upon a rule matching
 type Action struct {
-	Hostname     string   // hostname pattern to apply
-	Domain       string   // rule-specific domain to use when generating the FQDN
-	DomainAppend string   // controls when/how to append domain to hostname (rule vs. global vs. both)
-	Routers      []net.IP // router IPs for selected component(s)
-	Continue     bool     // whether to continue parsing subsequent rules if this matches
+	Hostname     string     // hostname pattern to apply
+	Domain       string     // rule-specific domain to use when generating the FQDN
+	DomainAppend string     // controls when/how to append domain to hostname (rule vs. global vs. both)
+	Netmask      net.IPMask // rule-specific network mask for IPv4
+	Routers      []net.IP   // router IPs for selected component(s)
+	Continue     bool       // whether to continue parsing subsequent rules if this matches
 }
 
 func (a Action) String() string {
@@ -199,6 +203,11 @@ func (a Action) String() string {
 		actionStr += fmt.Sprintf(",domain_append:%s", da)
 	}
 	actionStr += fmt.Sprintf(",continue:%v", a.Continue)
+
+	// Canonicalize netmask for IPv4 to CIDR notation
+	if ones, _ := a.Netmask.Size(); ones > 0 {
+		actionStr += fmt.Sprintf(",netmask:/%d", ones)
+	}
 
 	if len(a.Routers) > 0 {
 		parts := make([]string, 0, len(a.Routers))
@@ -279,10 +288,54 @@ func ParseRule(rule string) (Rule, error) {
 		}
 	}
 
-	// At least one action is required
-	if a.Hostname == "" &&
-		len(a.Routers) == 0 {
-		return Rule{}, NewErrRequiredKeys("hostname", "routers")
+	// netmask/cidr (action)
+	netmaskstr, netmaskFound := comps["netmask"]
+	cidrstr, cidrFound := comps["cidr"]
+	if netmaskFound && cidrFound {
+		// Both netmask and cidr are not allowed, only one or the other
+		return Rule{}, NewErrMutualExclusion("netmask", "cidr")
+	} else if netmaskFound {
+		// netmask specified
+
+		// Check that mask is a valid IP
+		netmaskIP := net.ParseIP(netmaskstr)
+		if netmaskIP == nil {
+			return Rule{}, NewErrInvalidValue("netmask", netmaskstr, "valid IPv4 address")
+		}
+
+		// Check that mask is not unspecified IP like 0.0.0.0
+		if netmaskIP.IsUnspecified() {
+			return Rule{}, NewErrInvalidValue("netmask", netmaskstr, "specific, usable IPv4 address")
+		}
+
+		// Check that mask IP is a valid IPv4
+		netmaskIP = netmaskIP.To4()
+		if netmaskIP == nil {
+			return Rule{}, NewErrInvalidValue("netmask", netmaskstr, "valid IPv4 address")
+		}
+
+		// Check that mask IP is a valid IPv4 netmask
+		netmask := net.IPv4Mask(netmaskIP[0], netmaskIP[1], netmaskIP[2], netmaskIP[3])
+		if !checkValidNetmask(netmask) {
+			return Rule{}, NewErrInvalidValue("netmask", netmaskstr, "valid IPv4 netmask")
+		}
+
+		a.Netmask = netmask
+	} else if cidrFound {
+		// cidr specified
+
+		// Convert from string to integer
+		cidr, err := strconv.Atoi(cidrstr)
+		if err != nil {
+			return Rule{}, NewErrInvalidValue("cidr", cidrstr, "integer")
+		}
+
+		// Check range validity (32 bits for IPv4)
+		if cidr <= 0 || cidr > 32 {
+			return Rule{}, NewErrInvalidValue("cidr", cidrstr, "valid IPv4 bit width between 1 and 32, inclusive")
+		}
+
+		a.Netmask = net.CIDRMask(cidr, 32)
 	}
 
 	// domain override (optional)
@@ -360,6 +413,29 @@ func ParseRule(rule string) (Rule, error) {
 			} else {
 				m.Subnets = append(m.Subnets, ipnet)
 			}
+		}
+
+		// If subnet/cidr not defined, use the subnet's CIDR for it
+		if ones, size := a.Netmask.Size(); ones == 0 || size == 0 {
+			cidr, _ := m.Subnets[0].Mask.Size()
+			if cidr > 0 {
+				a.Netmask = m.Subnets[0].Mask
+			} else {
+				// Do not err if mask is 0 or invalid; fallback to already-set
+				// netmask.
+			}
+		}
+	}
+
+	// At least one action is required.
+	//
+	// Netmask can be set explicitly via netmask/cidr or implicitly from subnet.
+	// In this way, subnet can be considered an "action" and is the only match
+	// key to be considered such.
+	if strings.TrimSpace(a.Hostname) == "" &&
+		len(a.Routers) == 0 {
+		if ones, size := a.Netmask.Size(); ones == 0 || size == 0 {
+			return Rule{}, NewErrRequiredKeys("hostname", "routers", "netmask")
 		}
 	}
 
@@ -561,6 +637,25 @@ func Evaluate4(logger *logrus.Entry, ii iface.IfaceInfo, globalDomain, ruleLog s
 			// Set routers
 			if len(rule.Action.Routers) > 0 {
 				resp.Options.Update(dhcpv4.OptRouter(rule.Action.Routers...))
+			}
+
+			// Set netmask (DHCP option 1)
+			//
+			// If the rule did not explicitly set a netmask/cidr action but the rule
+			// matched on subnet, implicitly set the subnet mask to the CIDR of the
+			// first subnet in the match list.
+			mask := rule.Action.Netmask
+			if ones, size := mask.Size(); ones == 0 || size == 0 {
+				if len(rule.Match.Subnets) > 0 {
+					m := rule.Match.Subnets[0].Mask
+					// Only apply IPv4 masks here (DHCPv4 option 1).
+					if len(m) == net.IPv4len {
+						mask = m
+					}
+				}
+			}
+			if ones, size := mask.Size(); ones != 0 && size != 0 {
+				resp.Options.Update(dhcpv4.OptSubnetMask(mask))
 			}
 
 			if !cont {

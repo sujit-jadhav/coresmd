@@ -454,7 +454,8 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 		"assigned_hostname": string(resp.Options.Get(dhcpv4.OptionHostName)),
 		"lease_duration":    globalConfig.leaseTime,
 		"server_ip":         resp.ServerIPAddr,
-		"router_ip":         string(resp.Options.Get(dhcpv4.OptionRouter)),
+		"router_ips":        fmt.Sprintf("%v", dhcpv4.GetIPs(dhcpv4.OptionRouter, resp.Options)),
+		"netmask":           fmt.Sprintf("%v", dhcpv4.GetIP(dhcpv4.OptionSubnetMask, resp.Options)),
 	}).Info("DHCPv4 assignment")
 
 	// STEP 2: Send boot config
