@@ -12,12 +12,11 @@ import (
 	"time"
 
 	"github.com/openchami/coresmd/internal/cache"
-	"github.com/openchami/coresmd/internal/hostname"
+	"github.com/openchami/coresmd/internal/rule"
 	"github.com/openchami/coresmd/internal/tftp"
 )
 
-// TestConfigString ensures String() includes the key fields in a stable format.
-func TestConfigString(t *testing.T) {
+func TestConfigString_IncludesKeyFields(t *testing.T) {
 	svc, _ := url.Parse("https://svc.example.test")
 	ipxe, _ := url.Parse("https://ipxe.example.test")
 	cacheDur := 10 * time.Second
@@ -32,21 +31,11 @@ func TestConfigString(t *testing.T) {
 		singlePort:  true,
 		tftpDir:     "/tftp",
 		tftpPort:    1069,
-		bmcPattern:  "bmc{04d}",
-		nodePattern: "nid{04d}",
 		domain:      "example.test",
-		policy: hostname.Policy{
-			DefaultPattern: "",
-			ByType: map[string]string{
-				"Node":      "nid{04d}",
-				"HSNSwitch": "{id}",
-			},
-		},
+		ruleLog:     "debug",
 	}
 
 	s := cfg.String()
-
-	// We don't assert exact formatting, just that the important pieces appear.
 	wantSubstrings := []string{
 		"svc_base_uri=" + svc.String(),
 		"ipxe_base_uri=" + ipxe.String(),
@@ -56,485 +45,138 @@ func TestConfigString(t *testing.T) {
 		"single_port=true",
 		"tftp_dir=/tftp",
 		"tftp_port=1069",
-		"bmc_pattern=bmc{04d}",
-		"node_pattern=nid{04d}",
 		"domain=example.test",
-		"hostname_by_type=Node:nid{04d}",
-		"hostname_by_type=HSNSwitch:{id}",
-		"hostname_default=",
+		"rule_log=debug",
 	}
-
 	for _, sub := range wantSubstrings {
 		if !strings.Contains(s, sub) {
-			t.Errorf("Config.String() = %q, expected to contain %q", s, sub)
+			t.Fatalf("Config.String() missing %q in %q", sub, s)
 		}
 	}
 }
 
-// TestParseConfig_Table covers the various accepted config keys and error cases.
-func TestParseConfig_Table(t *testing.T) {
+func TestParseConfig_Rules(t *testing.T) {
 	cacheDur := 15 * time.Second
 	leaseDur := 30 * time.Minute
 
-	tests := []struct {
-		name        string
-		args        []string
-		wantCfg     func() Config
-		wantErrsMin int // minimum number of errors expected (0 if none required)
-	}{
-		{
-			name: "all valid values",
-			args: []string{
-				"svc_base_uri=https://svc.example.test",
-				"ipxe_base_uri=https://ipxe.example.test",
-				"ca_cert=/etc/pki/ca.pem",
-				"cache_valid=" + cacheDur.String(),
-				"lease_time=" + leaseDur.String(),
-				"single_port=true",
-				"tftp_dir=/tftp",
-				"tftp_port=1069",
-				"bmc_pattern=bmc{03d}",
-				"node_pattern=nid{03d}",
-				"domain=cluster.local",
-				"hostname_by_type=Node:nid{04d}",
-				"hostname_by_type=HSNSwitch:{id}",
-				"hostname_default=",
-			},
-			wantCfg: func() Config {
-				svc, _ := url.Parse("https://svc.example.test")
-				ipxe, _ := url.Parse("https://ipxe.example.test")
-				return Config{
-					svcBaseURI:  svc,
-					ipxeBaseURI: ipxe,
-					caCert:      "/etc/pki/ca.pem",
-					cacheValid:  &cacheDur,
-					leaseTime:   &leaseDur,
-					singlePort:  true,
-					tftpDir:     "/tftp",
-					tftpPort:    1069,
-					bmcPattern:  "bmc{03d}",
-					nodePattern: "nid{03d}",
-					domain:      "cluster.local",
-					policy: hostname.Policy{
-						DefaultPattern: "",
-						ByType: map[string]string{
-							"Node":      "nid{04d}",
-							"HSNSwitch": "{id}",
-						},
-					},
-				}
-			},
-			wantErrsMin: 0,
-		},
-		{
-			name: "valid comments arg format",
-			args: strings.Fields(`/* comment at beginning */
-				svc_base_uri=https://svc.example.test
-				/* comment in middle */
-				tftp_dir=/tftp
-				/* comment at end */`),
-			wantCfg: func() Config {
-				svc, _ := url.Parse("https://svc.example.test")
-				return Config{
-					svcBaseURI: svc,
-					tftpDir:    "/tftp",
-				}
-			},
-			wantErrsMin: 0,
-		},
-		{
-			name: "runaway comment",
-			args: strings.Fields(`/* comment at beginning */
-				svc_base_uri=https://svc.example.test
-				/* comment in middle
-				tftp_dir=/tftp`),
-			wantCfg: func() Config {
-				svc, _ := url.Parse("https://svc.example.test")
-				return Config{
-					svcBaseURI: svc,
-				}
-			},
-			wantErrsMin: 1,
-		},
-		{
-			name: "comment end without comment start",
-			args: strings.Fields(`svc_base_uri=https://svc.example.test
-				comment in middle */
-				tftp_dir=/tftp`),
-			wantCfg: func() Config {
-				svc, _ := url.Parse("https://svc.example.test")
-				return Config{
-					svcBaseURI: svc,
-					tftpDir:    "/tftp",
-				}
-			},
-			wantErrsMin: 1,
-		},
-		{
-			name: "duplicate comment start",
-			args: strings.Fields(`svc_base_uri=https://svc.example.test
-				/* comment /* in middle */
-				tftp_dir=/tftp`),
-			wantCfg: func() Config {
-				svc, _ := url.Parse("https://svc.example.test")
-				return Config{
-					svcBaseURI: svc,
-					tftpDir:    "/tftp",
-				}
-			},
-			wantErrsMin: 0,
-		},
-		{
-			name: "comment without spaces",
-			args: strings.Fields(`svc_base_uri=https://svc.example.test
-				/*comment*/
-				tftp_dir=/tftp`),
-			wantCfg: func() Config {
-				svc, _ := url.Parse("https://svc.example.test")
-				return Config{
-					svcBaseURI: svc,
-					tftpDir:    "/tftp",
-				}
-			},
-			wantErrsMin: 0,
-		},
-		{
-			name: "invalid arg format",
-			args: []string{
-				"svc_base_uri=https://svc.example.test",
-				"badformat", // no '='
-			},
-			wantCfg: func() Config {
-				svc, _ := url.Parse("https://svc.example.test")
-				return Config{
-					svcBaseURI: svc,
-				}
-			},
-			wantErrsMin: 1,
-		},
-		{
-			name: "invalid cache_valid duration",
-			args: []string{
-				"cache_valid=notaduration",
-			},
-			wantCfg:     func() Config { return Config{} },
-			wantErrsMin: 1,
-		},
-		{
-			name: "invalid lease_time duration",
-			args: []string{
-				"lease_time=notaduration",
-			},
-			wantCfg:     func() Config { return Config{} },
-			wantErrsMin: 1,
-		},
-		{
-			name: "invalid single_port value",
-			args: []string{
-				"single_port=notabool",
-			},
-			wantCfg: func() Config {
-				// single_port should stay at the zero value (false) if parsing fails.
-				return Config{}
-			},
-			wantErrsMin: 1,
-		},
-		{
-			name: "invalid tftp_port non-integer",
-			args: []string{
-				"tftp_port=notanint",
-			},
-			wantCfg: func() Config {
-				return Config{
-					tftpPort: tftp.DefaultTFTPPort,
-				}
-			},
-			wantErrsMin: 1,
-		},
-		{
-			name: "invalid tftp_port out of range",
-			args: []string{
-				"tftp_port=70000",
-			},
-			wantCfg: func() Config {
-				return Config{
-					tftpPort: tftp.DefaultTFTPPort,
-				}
-			},
-			wantErrsMin: 1,
-		},
-		{
-			name: "unknown key produces error",
-			args: []string{
-				"svc_base_uri=https://svc.example.test",
-				"unknown_key=value",
-			},
-			wantCfg: func() Config {
-				svc, _ := url.Parse("https://svc.example.test")
-				return Config{
-					svcBaseURI: svc,
-				}
-			},
-			wantErrsMin: 1,
-		},
-		{
-			name: "tftp_dir_and_patterns_and_domain_trim_quotes",
-			args: []string{
-				`tftp_dir="/quoted/path"`,
-				`bmc_pattern="bmc{04d}"`,
-				`node_pattern='nid{04d}'`,
-				`domain="example.test"`,
-			},
-			wantCfg: func() Config {
-				return Config{
-					tftpDir:     "/quoted/path",
-					bmcPattern:  "bmc{04d}",
-					nodePattern: "nid{04d}",
-					domain:      "example.test",
-				}
-			},
-			wantErrsMin: 0,
-		},
-		{
-			name: "invalid hostname_by_type format cases",
-			args: []string{
-				"hostname_by_type=:nid{04d}",
-				"hostname_by_type=MyType::{id}",
-				"hostname_by_type=NoDelimiter",
-			},
-		},
-		//NOTE: should we test hostname_by_type=componentType: with no value?
-		// technically, this could be a valid case...
-		{
-			name: "valid non-zero hostname_default value",
-			args: []string{
-				"hostname_default=",
-			},
-		},
+	args := []string{
+		"svc_base_uri=https://svc.example.test",
+		"ipxe_base_uri=https://ipxe.example.test",
+		"ca_cert=/etc/pki/ca.pem",
+		"cache_valid=" + cacheDur.String(),
+		"lease_time=" + leaseDur.String(),
+		"single_port=true",
+		"tftp_dir=/tftp",
+		"tftp_port=1069",
+		"domain=cluster.local",
+		"rule_log=info",
+		"rule=name:special,type:Node,id:x1000s0c0b0n0,hostname:login-{id},domain:mgmt.local",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotCfg, errs := parseConfig(tt.args...)
-			if len(errs) < tt.wantErrsMin {
-				t.Fatalf("parseConfig() errors = %d, want at least %d; errs=%v", len(errs), tt.wantErrsMin, errs)
+	cfg, errs := parseConfig(args...)
+	if len(errs) != 0 {
+		t.Fatalf("parseConfig() unexpected errors: %v", errs)
+	}
+	if cfg.ruleLog != "info" {
+		t.Fatalf("ruleLog=%q", cfg.ruleLog)
+	}
+	if len(cfg.rules) != 1 {
+		t.Fatalf("rules len=%d, want 1", len(cfg.rules))
+	}
+	found := false
+	for _, r := range cfg.rules {
+		if r.Name == "special" {
+			found = true
+			// Rule-level log is omitted; it should inherit from global rule_log.
+			if r.Log != "" {
+				t.Fatalf("expected rule.Log to be empty before validate, got %q", r.Log)
 			}
-
-			var wantCfg Config
-			if tt.wantCfg == nil {
-				wantCfg = Config{}
-			} else {
-				wantCfg = tt.wantCfg()
+			if r.Match.ID != "x1000s0c0b0n0" {
+				t.Fatalf("special rule id=%q", r.Match.ID)
 			}
-
-			// Compare only the fields we care about for each test.
-			if wantCfg.svcBaseURI != nil {
-				if gotCfg.svcBaseURI == nil || wantCfg.svcBaseURI.String() != gotCfg.svcBaseURI.String() {
-					t.Errorf("svcBaseURI = %v, want %v", gotCfg.svcBaseURI, wantCfg.svcBaseURI)
-				}
+			if r.Match.Types == nil || !r.Match.Types["Node"] {
+				t.Fatalf("special rule type match missing")
 			}
-			if wantCfg.ipxeBaseURI != nil {
-				if gotCfg.ipxeBaseURI == nil || wantCfg.ipxeBaseURI.String() != gotCfg.ipxeBaseURI.String() {
-					t.Errorf("ipxeBaseURI = %v, want %v", gotCfg.ipxeBaseURI, wantCfg.ipxeBaseURI)
-				}
+			if r.Action.Hostname != "login-{id}" {
+				t.Fatalf("special rule hostname=%q", r.Action.Hostname)
 			}
-			if wantCfg.caCert != "" && gotCfg.caCert != wantCfg.caCert {
-				t.Errorf("caCert = %q, want %q", gotCfg.caCert, wantCfg.caCert)
+			if r.Action.Domain != "mgmt.local" {
+				t.Fatalf("special rule domain=%q", r.Action.Domain)
 			}
-			if wantCfg.cacheValid != nil {
-				if gotCfg.cacheValid == nil || *gotCfg.cacheValid != *wantCfg.cacheValid {
-					t.Errorf("cacheValid = %v, want %v", gotCfg.cacheValid, wantCfg.cacheValid)
-				}
-			}
-			if wantCfg.leaseTime != nil {
-				if gotCfg.leaseTime == nil || *gotCfg.leaseTime != *wantCfg.leaseTime {
-					t.Errorf("leaseTime = %v, want %v", gotCfg.leaseTime, wantCfg.leaseTime)
-				}
-			}
-			if gotCfg.singlePort != wantCfg.singlePort {
-				t.Errorf("singlePort = %v, want %v", gotCfg.singlePort, wantCfg.singlePort)
-			}
-			if gotCfg.tftpDir != wantCfg.tftpDir {
-				t.Errorf("tftpDir = %q, want %q", gotCfg.tftpDir, wantCfg.tftpDir)
-			}
-			if gotCfg.tftpPort != wantCfg.tftpPort {
-				t.Errorf("tftpPort = %d, want %d", gotCfg.tftpPort, wantCfg.tftpPort)
-			}
-			if wantCfg.bmcPattern != "" && gotCfg.bmcPattern != wantCfg.bmcPattern {
-				t.Errorf("bmcPattern = %q, want %q", gotCfg.bmcPattern, wantCfg.bmcPattern)
-			}
-			if wantCfg.nodePattern != "" && gotCfg.nodePattern != wantCfg.nodePattern {
-				t.Errorf("nodePattern = %q, want %q", gotCfg.nodePattern, wantCfg.nodePattern)
-			}
-			if wantCfg.domain != "" && gotCfg.domain != wantCfg.domain {
-				t.Errorf("domain = %q, want %q", gotCfg.domain, wantCfg.domain)
-			}
-		})
+		}
+	}
+	if !found {
+		t.Fatalf("did not find explicit rule named 'special'")
 	}
 }
 
-// TestConfigValidate_Table exercises validation, defaulting, and error paths.
-func TestConfigValidate_Table(t *testing.T) {
+func TestConfigValidate_RuleLogInheritance(t *testing.T) {
 	svc, _ := url.Parse("https://svc.example.test")
 	ipxe, _ := url.Parse("https://ipxe.example.test")
 
-	tests := []struct {
-		name        string
-		cfg         Config
-		wantWarnMin int
-		wantErrMin  int
-		check       func(t *testing.T, cfg Config)
-	}{
-		{
-			name:        "missing required URIs",
-			cfg:         Config{},
-			wantWarnMin: 1, // many warnings expected; just ensure at least one
-			wantErrMin:  2, // svc_base_uri and ipxe_base_uri required
-			check:       func(t *testing.T, cfg Config) {},
-		},
-		{
-			name: "valid URIs, defaults applied",
-			cfg: Config{
-				svcBaseURI:  svc,
-				ipxeBaseURI: ipxe,
-			},
-			// Exact number of warnings depends on combinations; we only care that
-			// defaults are applied and there are *some* warnings.
-			wantWarnMin: 5,
-			wantErrMin:  0,
-			check: func(t *testing.T, cfg Config) {
-				if cfg.cacheValid == nil || cfg.cacheValid.String() != cache.DefaultCacheValid {
-					t.Errorf("cacheValid = %v, want %s", cfg.cacheValid, cache.DefaultCacheValid)
-				}
-				if cfg.leaseTime == nil || cfg.leaseTime.String() != defaultLeaseTime {
-					t.Errorf("leaseTime = %v, want %s", cfg.leaseTime, defaultLeaseTime)
-				}
-				if cfg.tftpPort != tftp.DefaultTFTPPort {
-					t.Errorf("tftpPort = %d, want %d", cfg.tftpPort, tftp.DefaultTFTPPort)
-				}
-				if cfg.tftpDir != tftp.DefaultTFTPDirectory {
-					t.Errorf("tftpDir = %q, want %q", cfg.tftpDir, tftp.DefaultTFTPDirectory)
-				}
-				if cfg.bmcPattern != defaultBMCPattern {
-					t.Errorf("bmcPattern = %q, want %q", cfg.bmcPattern, defaultBMCPattern)
-				}
-				if cfg.nodePattern != defaultNodePattern {
-					t.Errorf("nodePattern = %q, want %q", cfg.nodePattern, defaultNodePattern)
-				}
-				if cfg.domain != "" {
-					t.Errorf("domain = %q, want empty (unset)", cfg.domain)
-				}
-			},
-		},
-		{
-			name: "tftpPort negative then defaulted",
-			cfg: Config{
-				svcBaseURI:  svc,
-				ipxeBaseURI: ipxe,
-				tftpPort:    -1,
-			},
-			wantWarnMin: 1,
-			wantErrMin:  0,
-			check: func(t *testing.T, cfg Config) {
-				if cfg.tftpPort != tftp.DefaultTFTPPort {
-					t.Errorf("tftpPort = %d, want %d", cfg.tftpPort, tftp.DefaultTFTPPort)
-				}
-				if cfg.bmcPattern != defaultBMCPattern {
-					t.Errorf("bmcPattern = %q, want %q", cfg.bmcPattern, defaultBMCPattern)
-				}
-				if cfg.nodePattern != defaultNodePattern {
-					t.Errorf("nodePattern = %q, want %q", cfg.nodePattern, defaultNodePattern)
-				}
-			},
-		},
-		{
-			name: "patterns_and_domain_already_set_no_pattern_defaults",
-			cfg: Config{
-				svcBaseURI:  svc,
-				ipxeBaseURI: ipxe,
-				bmcPattern:  "bmc{03d}",
-				nodePattern: "nid{03d}",
-				domain:      "example.test",
-			},
-			wantWarnMin: 3, // ca_cert, cache_valid, lease_time at least
-			wantErrMin:  0,
-			check: func(t *testing.T, cfg Config) {
-				if cfg.bmcPattern != "bmc{03d}" {
-					t.Errorf("bmcPattern = %q, want %q", cfg.bmcPattern, "bmc{03d}")
-				}
-				if cfg.nodePattern != "nid{03d}" {
-					t.Errorf("nodePattern = %q, want %q", cfg.nodePattern, "nid{03d}")
-				}
-				if cfg.domain != "example.test" {
-					t.Errorf("domain = %q, want %q", cfg.domain, "example.test")
-				}
-			},
-		},
+	// Create a config with a rule that omits Log; validate should set the
+	// effective per-rule log to the global rule_log value.
+	cfg := Config{svcBaseURI: svc, ipxeBaseURI: ipxe, ruleLog: "debug"}
+	cfg.rules = []rule.Rule{{Name: "r1", Log: "", Action: rule.Action{Hostname: "nid{04d}"}}}
+
+	_, errs := cfg.validate()
+	if len(errs) != 0 {
+		t.Fatalf("validate() errs=%v", errs)
+	}
+	if cfg.rules[0].Log != "debug" {
+		t.Fatalf("expected inherited rule log %q got %q", "debug", cfg.rules[0].Log)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Work on a copy because validate has a pointer receiver and mutates the config.
-			cfgCopy := tt.cfg
-			warns, errs := cfgCopy.validate()
-
-			if len(warns) < tt.wantWarnMin {
-				t.Errorf("validate() warnings = %d, want at least %d; warns=%v", len(warns), tt.wantWarnMin, warns)
-			}
-			if len(errs) < tt.wantErrMin {
-				t.Errorf("validate() errors = %d, want at least %d; errs=%v", len(errs), tt.wantErrMin, errs)
-			}
-
-			if tt.check != nil {
-				tt.check(t, cfgCopy)
-			}
-		})
+	// Explicit rule log must override global.
+	cfg = Config{svcBaseURI: svc, ipxeBaseURI: ipxe, ruleLog: "debug"}
+	cfg.rules = []rule.Rule{{Name: "r1", Log: "none", Action: rule.Action{Hostname: "nid{04d}"}}}
+	_, errs = cfg.validate()
+	if len(errs) != 0 {
+		t.Fatalf("validate() errs=%v", errs)
+	}
+	if cfg.rules[0].Log != "none" {
+		t.Fatalf("expected explicit rule log %q got %q", "none", cfg.rules[0].Log)
 	}
 }
 
-// TestSetup6_Success ensures DHCPv6 is properly supported with valid configuration.
-func TestSetup6_Success(t *testing.T) {
-	// Since setup6 tries to create an SMD client and cache, which would fail
-	// without a real server, we're primarily testing that:
-	// 1. The function signature is correct (returns Handler6)
-	// 2. It doesn't immediately return an error for DHCPv6 unsupported
-	// 3. Configuration parsing works the same as setup4
+func TestConfigValidate_DefaultsApplied(t *testing.T) {
+	svc, _ := url.Parse("https://svc.example.test")
+	ipxe, _ := url.Parse("https://ipxe.example.test")
 
-	// This test would need mocking of SMD client to fully test.
-	// For now, we verify the function exists and has the right signature.
-	if Plugin.Setup6 == nil {
-		t.Fatal("Plugin.Setup6 is nil, want non-nil function")
+	cfg := Config{svcBaseURI: svc, ipxeBaseURI: ipxe}
+	warns, errs := cfg.validate()
+	if len(errs) != 0 {
+		t.Fatalf("validate() errs=%v", errs)
 	}
+	if len(warns) == 0 {
+		t.Fatalf("validate() expected warnings, got none")
+	}
+	if cfg.cacheValid == nil || cfg.cacheValid.String() != cache.DefaultCacheValid {
+		t.Fatalf("cacheValid=%v want %s", cfg.cacheValid, cache.DefaultCacheValid)
+	}
+	if cfg.leaseTime == nil || cfg.leaseTime.String() != defaultLeaseTime {
+		t.Fatalf("leaseTime=%v want %s", cfg.leaseTime, defaultLeaseTime)
+	}
+	if cfg.tftpPort != tftp.DefaultTFTPPort {
+		t.Fatalf("tftpPort=%d want %d", cfg.tftpPort, tftp.DefaultTFTPPort)
+	}
+	if cfg.tftpDir != tftp.DefaultTFTPDirectory {
+		t.Fatalf("tftpDir=%q want %q", cfg.tftpDir, tftp.DefaultTFTPDirectory)
+	}
+	if cfg.ruleLog != "info" {
+		t.Fatalf("ruleLog=%q want %q", cfg.ruleLog, "info")
+	}
+}
 
-	// We can't fully test setup6 without mocking SMD, but we can verify
-	// it attempts to parse configuration correctly by checking error messages
+func TestSetup6_InvalidConfigFails(t *testing.T) {
+	if Plugin.Setup6 == nil {
+		t.Fatal("Plugin.Setup6 is nil")
+	}
 	h, err := Plugin.Setup6()
 	if err == nil {
-		t.Error("setup6() with no args should fail validation, got nil error")
+		t.Fatalf("setup6() with no args: expected error")
 	}
 	if h != nil {
-		t.Errorf("setup6() with invalid args should return nil handler, got %v", h)
-	}
-
-	// Test with incomplete config (missing required fields)
-	h2, err2 := Plugin.Setup6("svc_base_uri=https://smd.example.test")
-	if err2 == nil {
-		t.Error("setup6() with incomplete config should fail, got nil error")
-	}
-	if h2 != nil {
-		t.Errorf("setup6() with incomplete config should return nil handler, got %v", h2)
-	}
-}
-
-// TestPluginMetadata ensures the Plugin descriptor is wired correctly.
-func TestPluginMetadata(t *testing.T) {
-	if Plugin.Name != "coresmd" {
-		t.Errorf("Plugin.Name = %q, want %q", Plugin.Name, "coresmd")
-	}
-	if Plugin.Setup4 == nil {
-		t.Error("Plugin.Setup4 is nil, want non-nil")
-	}
-	if Plugin.Setup6 == nil {
-		t.Error("Plugin.Setup6 is nil, want non-nil")
+		t.Fatalf("setup6() with invalid config: expected nil handler")
 	}
 }

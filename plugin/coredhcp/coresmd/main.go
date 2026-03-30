@@ -18,13 +18,13 @@ import (
 	"github.com/coredhcp/coredhcp/plugins"
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/dhcpv6"
-	"github.com/insomniacslk/dhcp/rfc1035label"
+	"github.com/sirupsen/logrus"
 
 	"github.com/openchami/coresmd/internal/cache"
 	"github.com/openchami/coresmd/internal/debug"
-	"github.com/openchami/coresmd/internal/hostname"
 	"github.com/openchami/coresmd/internal/iface"
 	"github.com/openchami/coresmd/internal/ipxe"
+	"github.com/openchami/coresmd/internal/rule"
 	"github.com/openchami/coresmd/internal/smdclient"
 	"github.com/openchami/coresmd/internal/tftp"
 	"github.com/openchami/coresmd/internal/version"
@@ -32,22 +32,21 @@ import (
 
 type Config struct {
 	// Parsed from configuration file
-	svcBaseURI  *url.URL        // svc_base_uri
-	ipxeBaseURI *url.URL        // ipxe_base_uri
-	caCert      string          // ca_cert
-	cacheValid  *time.Duration  // cache_valid
-	leaseTime   *time.Duration  // lease_time
-	singlePort  bool            // single_port
-	tftpDir     string          // tftp_dir
-	tftpPort    int             // tftp_port
-	bmcPattern  string          // bmc_pattern
-	nodePattern string          // node_pattern
-	domain      string          // domain
-	policy      hostname.Policy // hostname_by_type, hostname_default
+	svcBaseURI  *url.URL       // svc_base_uri
+	ipxeBaseURI *url.URL       // ipxe_base_uri
+	caCert      string         // ca_cert
+	cacheValid  *time.Duration // cache_valid
+	leaseTime   *time.Duration // lease_time
+	singlePort  bool           // single_port
+	tftpDir     string         // tftp_dir
+	tftpPort    int            // tftp_port
+	domain      string         // domain
+	ruleLog     string         // rule_log
+	rules       []rule.Rule    // rule
 }
 
 func (c Config) String() string {
-	cfgStr := fmt.Sprintf("svc_base_uri=%s ipxe_base_uri=%s ca_cert=%s cache_valid=%s lease_time=%s single_port=%v tftp_dir=%s tftp_port=%d bmc_pattern=%s node_pattern=%s domain=%s",
+	cfgStr := fmt.Sprintf("svc_base_uri=%s ipxe_base_uri=%s ca_cert=%s cache_valid=%s lease_time=%s single_port=%v tftp_dir=%s tftp_port=%d domain=%s rule_log=%s",
 		c.svcBaseURI,
 		c.ipxeBaseURI,
 		c.caCert,
@@ -56,15 +55,11 @@ func (c Config) String() string {
 		c.singlePort,
 		c.tftpDir,
 		c.tftpPort,
-		c.bmcPattern,
-		c.nodePattern,
 		c.domain,
+		c.ruleLog,
 	)
-	cfgStr += fmt.Sprintf(" hostname_default=%s", c.policy.DefaultPattern)
-	if c.policy.ByType != nil {
-		for compType, pattern := range c.policy.ByType {
-			cfgStr += fmt.Sprintf(" hostname_by_type=%s:%s", compType, pattern)
-		}
+	for _, rule := range c.rules {
+		cfgStr += fmt.Sprintf(" rule=%s", rule)
 	}
 
 	return cfgStr
@@ -304,39 +299,48 @@ func parseConfig(argv ...string) (cfg Config, errs []error) {
 		case "bmc_pattern":
 			bmcPattern := strings.Trim(opt[1], `'"`)
 			if bmcPattern != "" {
-				cfg.bmcPattern = bmcPattern
+				bmcRuleStr := fmt.Sprintf("type:NodeBMC,hostname:%s", bmcPattern)
+				if bmcRule, err := rule.ParseRule(bmcRuleStr); err != nil {
+					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
+					continue
+				} else {
+					cfg.rules = append(cfg.rules, bmcRule)
+				}
 			}
 		case "node_pattern":
 			nodePattern := strings.Trim(opt[1], `"'`)
 			if nodePattern != "" {
-				cfg.nodePattern = nodePattern
+				nodeRuleStr := fmt.Sprintf("type:Node,hostname:%s", nodePattern)
+				if nodeRule, err := rule.ParseRule(nodeRuleStr); err != nil {
+					errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid hostname rule: %q: %w", idx, opt[0], opt[1], err))
+					continue
+				} else {
+					cfg.rules = append(cfg.rules, nodeRule)
+				}
 			}
 		case "domain":
 			domain := strings.Trim(opt[1], `"'`)
 			if domain != "" {
 				cfg.domain = domain
 			}
-		case "hostname_default":
-			hostnameDefault := strings.Trim(opt[1], `"'`)
-			if hostnameDefault != "" {
-				// Set the hostnameDefault to a pattern value
-				cfg.policy.DefaultPattern = hostnameDefault
+		case "rule_log":
+			if cfg.ruleLog != "" {
+				errs = append(errs, fmt.Errorf("non-comment arg %d: duplicate key '%s', using last value", idx, opt[0]))
 			}
-		case "hostname_by_type":
-			hostnameByType := strings.Trim(opt[1], `"'`)
-			if hostnameByType != "" {
-				// Separate ComponentType and pattern by delimiter
-				// componentType = vals[0], pattern = vals[1]
-				vals := strings.SplitN(opt[1], ":", 2)
-				if len(vals) != 2 {
-					errs = append(errs, fmt.Errorf("non-comment arg %d: invalid format for key '%s': expected hostname_by_type=<type>:<pattern>, got %s", idx, opt[0], opt[1]))
-					continue
-				}
-				if cfg.policy.ByType == nil {
-					cfg.policy.ByType = make(map[string]string)
-				}
-				cfg.policy.ByType[vals[0]] = vals[1]
+			switch opt[1] {
+			case "info", "debug", "none":
+				cfg.ruleLog = opt[1]
+			default:
+				errs = append(errs, fmt.Errorf("non-comment arg %d: invalid format for key '%s': expected 'info', 'debug', or 'none', got %s", idx, opt[0], opt[1]))
+				continue
 			}
+		case "rule":
+			rule, err := rule.ParseRule(opt[1])
+			if err != nil {
+				errs = append(errs, fmt.Errorf("non-comment arg %d: %s: invalid rule: %q: %w", idx, opt[0], opt[1], err))
+				continue
+			}
+			cfg.rules = append(cfg.rules, rule)
 		default:
 			errs = append(errs, fmt.Errorf("non-comment arg %d: unknown config key '%s' (skipping)", idx, opt[0]))
 			continue
@@ -391,22 +395,19 @@ func (c *Config) validate() (warns []string, errs []error) {
 		warns = append(warns, fmt.Sprintf("tftp_dir unset, defaulting to %s", tftp.DefaultTFTPDirectory))
 		c.tftpDir = tftp.DefaultTFTPDirectory
 	}
-	if c.bmcPattern == "" {
-		warns = append(warns, fmt.Sprintf("bmc_pattern unset, defaulting to %s", defaultBMCPattern))
-		c.bmcPattern = defaultBMCPattern
-	}
-	if c.nodePattern == "" {
-		warns = append(warns, fmt.Sprintf("node_pattern unset, defaulting to %s", defaultNodePattern))
-		c.nodePattern = defaultNodePattern
-	}
 	if c.domain == "" {
 		warns = append(warns, "domain unset, not configuring")
 	}
-	if c.policy.DefaultPattern == "" {
-		warns = append(warns, "hostname_default unset, hostname patterns will not be used when no hostname_by_type is found")
+	if strings.TrimSpace(c.ruleLog) == "" {
+		warns = append(warns, "rule_log unset, defaulting to info")
+		c.ruleLog = "info"
 	}
-	if c.policy.ByType == nil {
-		warns = append(warns, "hostname_by_type(s) unset, hostnames will not be expanded using patterns")
+	// Apply default per-rule log behavior; if rule-level log is omitted, inherit
+	// the global rule_log value.
+	for i := range c.rules {
+		if strings.TrimSpace(c.rules[i].Log) == "" {
+			c.rules[i].Log = c.ruleLog
+		}
 	}
 	return
 }
@@ -419,7 +420,7 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 	(*smdCache).Mutex.RLock()
 	defer smdCache.Mutex.RUnlock()
 
-	// STEP 1: Assign IP address
+	// STEP 1: Assign IP address and set standard DHCP options
 	hwAddr := req.ClientHWAddr.String()
 	ifaceInfo, err := iface.LookupMAC(log, hwAddr, smdCache)
 	if err != nil {
@@ -436,36 +437,25 @@ func Handler4(req, resp *dhcpv4.DHCPv4) (*dhcpv4.DHCPv4, bool) {
 		resp.Options.Update(dhcpv4.OptIPAddressLeaseTime(*globalConfig.leaseTime))
 	}
 
-	// Apply hostname policy customizations
-	hname := "(none)"
-	if expandedHostname, ok := globalConfig.policy.HostnameFor(ifaceInfo.Type, ifaceInfo.CompNID, ifaceInfo.CompID); ok {
-		hname = expandedHostname
-		resp.Options.Update(dhcpv4.OptHostName(expandedHostname))
-	}
-
-	// Allow node_pattern and bmc_pattern to overwrite hostname from policy
-	if ifaceInfo.Type == "Node" {
-		nodeHostname := hostname.ExpandHostnamePattern(globalConfig.nodePattern, ifaceInfo.CompNID, ifaceInfo.CompID)
-		if globalConfig.domain != "" {
-			nodeHostname = nodeHostname + "." + globalConfig.domain
-		}
-		hname = nodeHostname
-		log.Debugf("setting hostname for node %s to %s", ifaceInfo.CompID, hname)
-	} else if ifaceInfo.Type == "NodeBMC" {
-		bmcHostname := hostname.ExpandHostnamePattern(globalConfig.bmcPattern, ifaceInfo.CompNID, ifaceInfo.CompID)
-		if globalConfig.domain != "" {
-			bmcHostname = bmcHostname + "." + globalConfig.domain
-		}
-		hname = bmcHostname
-		log.Debugf("setting hostname for BMC %s to %s", ifaceInfo.CompID, hname)
-	}
-
-	// Log assignment
-	log.Infof("assigning IP %s and hostname %s to %s (%s) with a lease duration of %s", assignedIP, hname, ifaceInfo.MAC, ifaceInfo.Type, globalConfig.leaseTime)
-	resp.Options.Update(dhcpv4.OptHostName(hname))
+	// Apply rules
+	rule.Evaluate4(log, ifaceInfo, globalConfig.domain, globalConfig.ruleLog, resp, globalConfig.rules)
 
 	// Set root path to this server's IP
 	resp.Options.Update(dhcpv4.OptRootPath(resp.ServerIPAddr.String()))
+
+	// Log assignment
+	log.WithFields(logrus.Fields{
+		"comp_id":           ifaceInfo.CompID,
+		"comp_nid":          ifaceInfo.CompNID,
+		"comp_type":         ifaceInfo.Type,
+		"comp_ips":          ifaceInfo.IPList,
+		"comp_mac":          ifaceInfo.MAC,
+		"assigned_ipv4":     assignedIP,
+		"assigned_hostname": string(resp.Options.Get(dhcpv4.OptionHostName)),
+		"lease_duration":    globalConfig.leaseTime,
+		"server_ip":         resp.ServerIPAddr,
+		"router_ip":         string(resp.Options.Get(dhcpv4.OptionRouter)),
+	}).Info("DHCPv4 assignment")
 
 	// STEP 2: Send boot config
 	if cinfo := req.Options.Get(dhcpv4.OptionUserClassInformation); string(cinfo) != "iPXE" {
@@ -527,27 +517,8 @@ func Handler6(req, resp dhcpv6.DHCPv6) (dhcpv6.DHCPv6, bool) {
 		return resp, false
 	}
 
-	// Set client hostname
-	hname := "(none)"
-	if ifaceInfo.Type == "Node" {
-		nodeHostname := hostname.ExpandHostnamePattern(globalConfig.nodePattern, ifaceInfo.CompNID, ifaceInfo.CompID)
-		if globalConfig.domain != "" {
-			nodeHostname = nodeHostname + "." + globalConfig.domain
-		}
-		hname = nodeHostname
-		labels := &rfc1035label.Labels{Labels: strings.Split(nodeHostname, ".")}
-		msg.UpdateOption(&dhcpv6.OptFQDN{Flags: 0, DomainName: labels})
-		log.Debugf("setting hostname for node %s to %s", ifaceInfo.CompID, nodeHostname)
-	} else if ifaceInfo.Type == "NodeBMC" {
-		bmcHostname := hostname.ExpandHostnamePattern(globalConfig.bmcPattern, ifaceInfo.CompNID, ifaceInfo.CompID)
-		if globalConfig.domain != "" {
-			bmcHostname = bmcHostname + "." + globalConfig.domain
-		}
-		hname = bmcHostname
-		labels := &rfc1035label.Labels{Labels: strings.Split(bmcHostname, ".")}
-		msg.UpdateOption(&dhcpv6.OptFQDN{Flags: 0, DomainName: labels})
-		log.Debugf("setting hostname for BMC %s to %s", ifaceInfo.CompID, bmcHostname)
-	}
+	// Apply rules
+	rule.Evaluate6(log, ifaceInfo, globalConfig.domain, globalConfig.ruleLog, msg, globalConfig.rules)
 
 	// Add IANA (Identity Association for Non-temporary Addresses) with the IPv6 address
 	reqMsg, ok := req.(*dhcpv6.Message)
@@ -574,7 +545,16 @@ func Handler6(req, resp dhcpv6.DHCPv6) (dhcpv6.DHCPv6, bool) {
 	}
 
 	// Log assignment
-	log.Infof("assigning IPv6 %s and hostname %s to %s (%s) with a lease duration of %s", assignedIPv6, hname, ifaceInfo.MAC, ifaceInfo.Type, globalConfig.leaseTime)
+	log.WithFields(logrus.Fields{
+		"comp_id":           ifaceInfo.CompID,
+		"comp_nid":          ifaceInfo.CompNID,
+		"comp_type":         ifaceInfo.Type,
+		"comp_ips":          ifaceInfo.IPList,
+		"comp_mac":          ifaceInfo.MAC,
+		"assigned_ipv6":     assignedIPv6,
+		"assigned_hostname": resp.GetOption(dhcpv6.OptionFQDN),
+		"lease_duration":    globalConfig.leaseTime,
+	}).Info("DHCPv6 assignment")
 
 	// STEP 2: Send boot config for iPXE
 	if reqMsg, ok := req.(*dhcpv6.Message); ok {

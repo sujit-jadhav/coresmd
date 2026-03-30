@@ -49,11 +49,13 @@ server4:
     # The format of configuration options below is "key=value", with no spaces
     # on either side of the equal sign. Quotes around values are optional.
     #
-    # CUSTOM HOSTNAMES
+    # HOSTNAME RULES
     #
-    # For node_pattern and bmc_pattern (see CONFIGURATION KEYS below), custom
-    # hostname patterns can be specified to dynamically generate custom
-    # hostnames for BMCs and nodes in SMD.
+    # CoreSMD sets DHCP option 12 (Host Name) using an ordered list of
+    # hostname rules (rule=...). Rules match on SMD attributes
+    # (type/id/subnet) and generate hostnames using the hostname pattern syntax below.
+    #
+    # See examples/coredhcp/hostnames.md for the full specification.
     #
     # Hostname Placeholder Syntax:
     #
@@ -70,26 +72,25 @@ server4:
     #   "node-{id}"     -> node-x3000c0s0b0n0
     #   "dev-s{02d}"    -> dev-s01, dev-s42
     #
-    # CUSTOM HOSTNAME COMPONENT TYPES
+    # COMPONENT TYPES
     #
-    # MgmtSwitch
-    # Node
-    # NodeBMC
-    # RouterBMC
-    # VirtualNode
+    # MgmtSwitch, Node, NodeBMC, RouterBMC, VirtualNode, ...
     #
     # A full list of the component types can be found in the SMD source code:
     # https://github.com/OpenCHAMI/smd/blob/63e15b2c0675bfd64459d1d49f1ab03ac5717d87/pkg/schemas/csm/components.go#L31
     #
-    # CUSTOM DOMAINS:
+    # DOMAINS
     #
-    # If 'domain' is specified (see CONFIGURATION KEYS below), a custom domain
-    # will be appended to hostnames generated using the custom hostname
-    # mechanism above, making generated hostnames fully-qualified.
+    # If 'domain' is specified (see CONFIGURATION KEYS below), it is appended
+    # to hostnames unless a rule specifies its own domain behavior.
     #
     # For instance, for the following configuration:
     #
-    #   - coresmd: ... node_pattern="{id}" bmc_pattern="{id}" domain=cluster.local
+    #   - coresmd: |
+    #       ...
+    #       rule=type:Node,hostname:"{id}"
+    #       rule=type:NodeBMC,hostname:"{id}"
+    #       domain=cluster.local
     #
     # {id} will be expanded to the node/BMC's xname and the domain cluster.local
     # will be appended. For example:
@@ -123,6 +124,26 @@ server4:
     #   optional fraction and a unit suffix, such as "300ms"  or "2h45m". Valid
     #   time units are "ns", "us" (or "µs"), "ms", "s", "m", "h".
     #
+    # domain (OPTIONAL, string)
+    #   An optional domain suffix to append to hostnames. If omitted, no domain
+    #   will be appended.
+    #
+    # rule_log (OPTIONAL, enum, default=info)
+    #   Controls rule logging.
+    #
+    #   Possible values:
+    #   - info: log matching rules (rule name, match keys, resulting hostname)
+    #   - debug: log matching and non-matching rules (useful for troubleshooting)
+    #   - none: disable rule logging
+    #
+    # rule (OPTIONAL, string, repeatable)
+    #   Adds a rule. Rules are evaluated in order. A matching rule may set the
+    #   hostname (`hostname:...`) and/or DHCPv4 routers (`routers:...`). Match
+    #   keys are optional (type/subnet/id). If no rule sets a hostname, CoreSMD
+    #   falls back to the built-in default hostname pattern "unknown-{04d}".
+    #
+    #   See examples/coredhcp/hostnames.md for details and advanced examples.
+    #
     # lease_time (OPTIONAL, string, default=1h)
     #   The time duration that the served leases are valid. If omitted, the
     #   default value will be used.
@@ -144,38 +165,6 @@ server4:
     # tftp_port (OPTIONAL, integer, default=69)
     #   The transport layer network port to bind to. If omitted, the default
     #   value will be used.
-    #
-    # node_pattern (OPTIONAL, string, default=id{04d})
-    #   The hostname pattern to use to generate hostnames for nodes in SMD. See
-    #   CUSTOM HOSTNAMES above for details.
-    #
-    # bmc_pattern (OPTIONAL, string, default=bmc{04d})
-    #   The hostname pattern to use to generate hostnames for BMCs in SMD. See
-    #   CUSTOM HOSTNAMES above for details.
-    #
-    # domain (OPTIONAL, string)
-    #   An optional domain to append to hostnames generated with node_pattern
-    #   and bmc_pattern. If omitted, no domain will be appended. See CUSTOM
-    #   DOMAINS above for details.
-    #
-    # hostname_by_type (OPTIONAL, string, repeatable)
-    #   Policy customization to map component types with hostname patterns. If
-    #   the component type is found, the pattern will be used to generate
-    #   hostnames. Otherwise, the hostname_default value is used instead. This 
-    #   configuration option can be specified multiple times for different
-    #   component types. See CUSTOM HOSTNAMES for details.
-    #
-    #   Component type "Node" and "NodeBMC" are reserved for node_pattern and
-    #   bmc_pattern, respectively. Values set for node_pattern and bmc_pattern will
-    #   override values set for Node and NodeBMC if set for hostname_by_type.
-    #
-    # hostname_default (OPTIONAL, string)
-    #   The default fallback hostname to use when a component type is not found.
-    #   See CUSTOM HOSTNAMES for details.
-    #
-    #   Component type "Node" and "NodeBMC" are reserved for node_pattern and
-    #   bmc_pattern, respectively. Values set for node_pattern and bmc_pattern will
-    #   override values set for Node and NodeBMC if set for hostname_default.
     - coresmd: |
         /* SMD base URI */
         svc_base_uri=https://foobar.openchami.cluster
@@ -193,17 +182,15 @@ server4:
         tftp_dir=/tftpboot
         /* OPTIONAL: TFTP server listen port (default 69) */
         tftp_port=69
-        /* OPTIONAL: pattern for determining node hostnames */
-        node_pattern=nid{04d}
-        /* OPTIONAL: pattern for determining BMC hostnames */
-        bmc_pattern=bmc{04d}
         /* OPTIONAL: domain to append to hostnames */
         domain=openchami.cluster
-        /* OPTIONAL: policies to use hostname pattern by SMD component type */
-        hostname_by_type=Node:nid{04d}
-        hostname_by_type=HSNSwitch:{id}
-        /* OPTIONAL: fallback hostname pattern */
-        hostname_default=
+        /* OPTIONAL: hostname rules (see examples/coredhcp/hostnames.md) */
+        rule_log=info
+        rule=type:Node,hostname:nid{04d}
+        rule=type:NodeBMC,hostname:bmc{04d}
+        rule=type:HSNSwitch,hostname:{id}
+        /* OPTIONAL: override built-in fallback (default is unknown-{04d}) */
+        rule=hostname:unknown-{04d}
 
     # Any requests reaching this point are unknown to SMD and it is up to the
     # administrator to decide how to handle unknown packets.
@@ -339,8 +326,7 @@ server6:
     # - svc_base_uri, ipxe_base_uri, ca_cert
     # - cache_valid, lease_time
     # - single_port, tftp_dir, tftp_port
-    # - node_pattern, bmc_pattern, domain
-    # - hostname_by_type, hostname_by_default
+    # - domain, rule_log, rule
     - coresmd: |
         svc_base_uri=https://foobar.openchami.cluster
         ipxe_base_uri=http://[fd00:100::254]:8081
@@ -350,12 +336,12 @@ server6:
         single_port=false
         tftp_dir=/tftpboot
         tftp_port=69
-        node_pattern=nid{04d}
-        bmc_pattern=bmc{04d}
         domain=openchami.cluster
-        hostname_by_type=Node:nid{04d}
-        hostname_by_type=HSNSwitch:{id}
-        hostname_default=
+        rule_log=info
+        rule=type:Node,hostname:nid{04d}
+        rule=type:NodeBMC,hostname:bmc{04d}
+        rule=type:HSNSwitch,hostname:{id}
+        rule=hostname:unknown-{04d}
 
     # NOTE: The bootloop plugin currently only supports DHCPv4 and is not
     # available for DHCPv6. For DHCPv6, consider using other mechanisms for
