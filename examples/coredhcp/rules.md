@@ -5,11 +5,14 @@ SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
 SPDX-License-Identifier: MIT
 -->
 
-# Rules for the CoreSMD CoreDHCP Plugin (Hostnames and Routers)
+# Rich Rules for the CoreSMD CoreDHCP Plugin
+
+Rich rules allow specifying various DHCP options for certain machines using
+match filters.
 
 ## Contents
 
-- [Rules for the CoreSMD CoreDHCP Plugin (Hostnames and Routers)](#rules-for-the-coresmd-coredhcp-plugin-hostnames-and-routers)
+- [Rich Rules for the CoreSMD CoreDHCP Plugin](#rich-rules-for-the-coresmd-coredhcp-plugin)
   - [Contents](#contents)
   - [Quick Start](#quick-start)
   - [Summary](#summary)
@@ -30,6 +33,8 @@ SPDX-License-Identifier: MIT
     - [Action Keys](#action-keys)
       - [`hostname:PATTERN`](#hostnamepattern)
       - [`routers:IP[|IP...]`](#routersipip)
+      - [`netmask:MASK`](#netmaskmask)
+      - [`cidr:BITS`](#cidrbits)
       - [`domain:DOMAIN`](#domaindomain-1)
       - [`domain_append:MODE`](#domain_appendmode)
       - [`continue:{true|false}`](#continuetruefalse)
@@ -42,9 +47,10 @@ SPDX-License-Identifier: MIT
     - [3. Per-type rules](#3-per-type-rules)
     - [4. Subnet-specific BMC naming](#4-subnet-specific-bmc-naming)
     - [5. Per-subnet routers (DHCPv4 option 3)](#5-per-subnet-routers-dhcpv4-option-3)
-    - [6. Suppress domain suffix for selected hosts](#6-suppress-domain-suffix-for-selected-hosts)
-    - [7. Hostname override with `continue`](#7-hostname-override-with-continue)
-    - [8. Familiar "legacy-style" configuration, expressed as rules](#8-familiar-legacy-style-configuration-expressed-as-rules)
+    - [6. Netmask and CIDR (DHCPv4 option 1)](#6-netmask-and-cidr-dhcpv4-option-1)
+    - [7. Suppress domain suffix for selected hosts](#7-suppress-domain-suffix-for-selected-hosts)
+    - [8. Hostname override with `continue`](#8-hostname-override-with-continue)
+    - [9. Familiar "legacy-style" configuration, expressed as rules](#9-familiar-legacy-style-configuration-expressed-as-rules)
   - [Caveats](#caveats)
   - [See Also](#see-also)
 
@@ -71,7 +77,7 @@ In a CoreDHCP configuration:
 ## Summary
 
 CoreSMD can set various DHCP options (e.g. hostname (option 12), routers (option
-3)) using an ordered list of rules. Each rule matches on SMD inventory
+3), netmask (option 1), etc.) using an ordered list of rules. Each rule matches on SMD inventory
 attributes (component type, component ID, and the assigned IP address) and sets
 the appropriate DHCP options based on the actions defined in the rule.
 
@@ -105,7 +111,11 @@ Controls rule logging.
 
 Add a rule. May be specified multiple times. **Order matters!**
 
-A rule may set a hostname (DHCP option 12) and/or routers (DHCPv4 option 3).
+A rule may set:
+
+- `hostname` (DHCP option 12)
+- `routers` (DHCPv4 option 3)
+- `netmask` (DHCPv4 option 1)
 
 ## Migrating from `*_pattern`
 
@@ -191,9 +201,13 @@ one type.
 
 #### `subnet:CIDR[|CIDR...]`
 
-Match assigned IP against one or more CIDRs. **Only the first IP is
-matched** because CoreDHCP only assigns one address to the interface and it is
-assumed that the first IP address in the list is the desired one.
+Match assigned IP against one or more CIDRs. If a component in SMD has more
+than one IP address assigned, **only the first IP in the list is matched
+against `subnet`** because CoreDHCP only assigns one address to the interface
+and it is assumed that the first IP address in the list is the desired one.
+
+`subnet` is the only match key that can also serve as an action key. See
+[`netmask:MASK`](#netmaskmask) and [`cidr:BITS`](#cidrbits).
 
 **Default:** omitted (matches any subnet)
 
@@ -217,8 +231,8 @@ Mutually exclusive with `id`.
 ### Action Keys
 
 Rules may apply one or more actions when matched. At least one action must be
-specified. If no match keys are specified, the action(s) will apply to all
-incoming DHCP requests.
+specified (`hostname`, `routers`, `netmask`, or `cidr`). If no match keys are
+specified, the action(s) will apply to all incoming DHCP requests.
 
 #### `hostname:PATTERN`
 
@@ -229,12 +243,49 @@ legacy `pattern` key. See [Pattern Syntax](#pattern-syntax) above.
 
 #### `routers:IP[|IP...]`
 
-Set DHCPv4 Router option (RFC 2132 option 3) for the matched host. Multiple
-routers may be specified using `|`.
+Set DHCPv4 Router option (RFC 2132 option 3) for the matched host. Values must
+be IPv4 addresses. Multiple routers may be specified using `|`. This action
+will override any routers set with the CoreDHCP `netmask` plugin.
 
 This action applies to DHCPv4 only.
 
 **Default:** omitted (no routers set by this rule)
+
+#### `netmask:MASK`
+
+Set DHCPv4 Subnet Mask option (RFC 2132 option 1) for the matched host. The
+mask must be a valid IPv4 network mask (contiguous 1-bits), for example:
+
+- `255.255.255.0`
+- `255.255.252.0`
+
+This action applies to DHCPv4 only.
+
+Mutually exclusive with `cidr`.
+
+If a rule uses the `subnet` match key and neither `netmask` nor `cidr` is
+specified, CoreSMD sets the DHCPv4 Subnet Mask option to the mask of the **first
+subnet** in the rule.
+
+**Default:** omitted
+
+#### `cidr:BITS`
+
+Set DHCPv4 Subnet Mask option (RFC 2132 option 1) for the matched host by CIDR
+width, where `BITS` is an integer from 1 to 32 (inclusive), for example:
+
+- `24` (equivalent to `255.255.255.0`)
+- `21` (equivalent to `255.255.248.0`)
+
+This action applies to DHCPv4 only.
+
+Mutually exclusive with `netmask`.
+
+If a rule uses the `subnet` match key and neither `netmask` nor `cidr` is
+specified, CoreSMD sets the DHCPv4 Subnet Mask option to the mask of the **first
+subnet** in the rule.
+
+**Default:** omitted
 
 #### `domain:DOMAIN`
 
@@ -413,7 +464,35 @@ to DHCP option 3 for matching DHCPv4 clients.
 | 172.16.1.10 | Node | 7 | `nid0007.lab.local` | `172.16.1.1`, `172.16.1.2` |
 | 172.16.9.10 | Node | 7 | `nid0007.lab.local` | `172.16.0.1` |
 
-### 6. Suppress domain suffix for selected hosts
+### 6. Netmask and CIDR (DHCPv4 option 1)
+
+Use `netmask:` or `cidr:` to set the DHCPv4 subnet mask (option 1).
+
+If a rule uses `subnet:` as a match key and neither `netmask` nor `cidr` is
+specified, CoreSMD sets option 1 to the mask of the **first subnet** in the
+rule.
+
+```yaml
+- coresmd: |
+    domain=lab.local
+
+    /* Explicit mask */
+    rule=name:mask,type:Node,hostname:nid{04d},netmask:255.255.255.0
+
+    /* Explicit CIDR */
+    rule=name:cidr,type:NodeBMC,hostname:bmc{04d},cidr:26
+
+    /* Implicit mask from subnet (first subnet only) */
+    rule=name:implicit,type:Node,subnet:172.16.0.0/21|172.16.8.0/21,hostname:nid{04d}
+```
+
+| Rule | Type | IP (assigned) | Hostname | Netmask (option 1) |
+|---|---|---:|---|---|
+| `mask` | Node | 172.16.0.10 | `nid0007.lab.local` | `255.255.255.0` |
+| `cidr` | NodeBMC | 172.16.0.10 | `bmc0007.lab.local` | `255.255.255.192` |
+| `implicit` | Node | 172.16.0.10 | `nid0007.lab.local` | `255.255.248.0` |
+
+### 7. Suppress domain suffix for selected hosts
 
 Use `domain_append:none` in the rule action. This suppresses all domain
 suffixing, regardless of global `domain` and regardless of other
@@ -435,7 +514,7 @@ Use `domain_append:none` to suppress suffixing.
 | 1 | Node | `nid0001.cluster.local` |
 | 1 | NodeBMC | `bmc0001` |
 
-### 7. Hostname override with `continue`
+### 8. Hostname override with `continue`
 
 `continue:true` allows later rules to refine/override hostnames.
 
@@ -458,7 +537,7 @@ the second overrides the domain for that subnet.
 | 172.16.0.10 | Node | 7 | `nid0007.mgmt.local` |
 | 172.16.9.10 | Node | 7 | `nid0007.cluster.local` |
 
-### 8. Familiar "legacy-style" configuration, expressed as rules
+### 9. Familiar "legacy-style" configuration, expressed as rules
 
 The old `node_pattern`, `bmc_pattern`, `hostname_by_type`, and
 `hostname_default` directives are replaced by `rule`.
@@ -485,7 +564,8 @@ while preserving rule ordering and allowing additional matching criteria.
 
 ## Caveats
 
-- At least one action must be specified: `hostname` and/or `routers`.
+- At least one action must be specified: `hostname`, `routers`, `netmask`, or `cidr`.
+  (Note: `subnet` may implicitly set a netmask when neither `netmask` nor `cidr` is specified.)
 - `type:` is optional, but if present must include at least one type.
 - Only the first assigned IP is used for subnet matching.
 - `domain_append:none` suppresses all domain suffixing.
