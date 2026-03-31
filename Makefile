@@ -136,11 +136,11 @@ goreleaser-clean: ## Clean Goreleaser files (remove dist/)
 	$(RM) -rf dist/
 
 .PHONY: check-reuse
-check-reuse:
+check-reuse: ## Check REUSE compliance
 ifeq ($(REUSE),)
 	$(error reuse command not found)
 endif
-	reuse lint
+	reuse lint --lines
 
 .PHONY: lint
 lint:
